@@ -1,0 +1,90 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: vn_accounting
+      POSTGRES_PASSWORD: vn_accounting_dev
+      POSTGRES_DB: vn_accounting
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vn_accounting"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: development
+      APP_DEBUG: "true"
+      ALLOWED_ORIGINS: '["http://localhost:3000","http://localhost:8000"]'
+      DATABASE_URL: postgresql+asyncpg://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
+      DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: dev-jwt-secret
+      LOCAL_STORAGE_DIR: /app/storage
+      USE_CELERY: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: >
+      bash -lc "alembic -c alembic.ini upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
+      DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: dev-jwt-secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: >
+      bash -lc "alembic -c alembic.ini upgrade head &&
+      celery -A app.workers.celery_app worker --loglevel=info --concurrency=4"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    command: npm run dev
+
+volumes:
+  postgres_data:

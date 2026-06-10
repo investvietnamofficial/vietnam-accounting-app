@@ -1,0 +1,15 @@
+.venv/
+.venv311/
+__pycache__/
+*.py[cod]
+
+backend/storage/
+backend/.env
+
+web/node_modules/
+web/.next/
+web/.env.local
+
+mobile/.dart_tool/
+mobile/build/
+mobile/pubspec.lock
