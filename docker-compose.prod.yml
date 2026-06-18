@@ -55,6 +55,12 @@ services:
       NEXT_PUBLIC_APP_ENV: production
     depends_on:
       - backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vnAccounting.rule=Host(`vn-accounting.178.105.157.205.sslip.io`)"
+      - "traefik.http.routers.vnAccounting.entrypoints=websecure"
+      - "traefik.http.services.vnAccounting.loadbalancer.server.port=3000"
+      - "traefik.http.routers.vnAccounting.tls.certresolver=letsencrypt"
 
 volumes:
   postgres_prod_data:
