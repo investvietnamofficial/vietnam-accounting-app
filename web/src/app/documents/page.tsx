@@ -12,6 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { ProtectedPage } from "@/components/protected-page";
+import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/components/auth-provider";
 import {
   useDocument,
@@ -107,56 +108,19 @@ export default function DocumentsPage() {
 
   return (
     <ProtectedPage>
-      <main className="min-h-screen bg-slate-50 text-slate-950">
-        {/* Header */}
-        <header className="border-b bg-white">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-            <div>
-              <p className="text-sm text-slate-500">{user?.email}</p>
-              <h1 className="text-2xl font-semibold">Documents</h1>
+      <div className="flex min-h-screen bg-slate-50 text-slate-950">
+        <Sidebar />
+        <main className="flex-1">
+          <header className="border-b bg-white">
+            <div className="flex items-center justify-between px-6 py-4">
+              <div>
+                <p className="text-sm text-slate-500">{user?.email}</p>
+                <h1 className="text-2xl font-semibold">Documents</h1>
+              </div>
+              <button className="rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-slate-100" onClick={logout}>Sign out</button>
             </div>
-            <nav className="flex items-center gap-2 text-sm">
-              <Link
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                href="/dashboard"
-              >
-                Dashboard
-              </Link>
-              <Link
-                className="rounded-md bg-slate-900 px-3 py-2 text-white"
-                href="/documents"
-              >
-                Documents
-              </Link>
-              <Link
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                href="/invoices"
-              >
-                Invoices
-              </Link>
-              <Link
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                href="/reports"
-              >
-                Reports
-              </Link>
-              <Link
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                href="/settings"
-              >
-                Settings
-              </Link>
-              <button
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                onClick={logout}
-              >
-                Sign out
-              </button>
-            </nav>
-          </div>
-        </header>
-
-        <section className="mx-auto max-w-7xl px-6 py-6 space-y-6">
+          </header>
+          <section className="px-6 py-6 space-y-6">
           {/* Upload Zone */}
           <div
             className={`relative rounded-lg border-2 border-dashed p-8 text-center transition-colors ${
@@ -334,7 +298,8 @@ export default function DocumentsPage() {
             )}
           </div>
         </section>
-      </main>
+        </main>
+        </div>
     </ProtectedPage>
   );
 }

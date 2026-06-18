@@ -56,6 +56,9 @@ export interface Document {
   ocr_confidence: number | null;
   extraction_confidence: number | null;
   extracted_data: ExtractedInvoiceData | null;
+  processing_error: string | null;
+  processing_attempts: number | null;
+  processed_at: string | null;
   created_at: string;
   updated_at: string;
 }

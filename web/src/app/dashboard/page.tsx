@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useMemo, useRef } from "react";
 import { FileUp, ReceiptText, RefreshCw, ShieldCheck, TrendingUp } from "lucide-react";
 import { ProtectedPage } from "@/components/protected-page";
+import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/components/auth-provider";
 import { useDocuments, useInvoices, useUploadDocument, useVATSummary } from "@/hooks/useApi";
 
@@ -34,23 +35,25 @@ export default function DashboardPage() {
 
   return (
     <ProtectedPage>
-    <main className="min-h-screen bg-slate-50 text-slate-950">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div>
-            <p className="text-sm text-slate-500">{user?.email}</p>
-            <h1 className="text-2xl font-semibold">Compliance Workspace</h1>
+    <div className="flex min-h-screen bg-slate-50 text-slate-950">
+      <Sidebar />
+      <main className="flex-1">
+        <header className="border-b bg-white">
+          <div className="flex items-center justify-between px-6 py-4">
+            <div>
+              <p className="text-sm text-slate-500">{user?.email}</p>
+              <h1 className="text-2xl font-semibold">Compliance Workspace</h1>
+            </div>
+            <nav className="flex items-center gap-2 text-sm">
+              <Link title="Open the dashboard overview for uploads, invoice activity, and VAT status." className="rounded-md bg-slate-900 px-3 py-2 text-white" href="/dashboard">Dashboard</Link>
+              <Link title="Browse extracted invoices, amounts, and review status." className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="/invoices">Invoices</Link>
+              <Link title="Open VAT and CIT reports, declaration inputs, and exports." className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="/reports">Reports</Link>
+              <button title="Sign out of the current tenant session." className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" onClick={logout}>Sign out</button>
+            </nav>
           </div>
-          <nav className="flex items-center gap-2 text-sm">
-            <Link title="Open the dashboard overview for uploads, invoice activity, and VAT status." className="rounded-md bg-slate-900 px-3 py-2 text-white" href="/dashboard">Dashboard</Link>
-            <Link title="Browse extracted invoices, amounts, and review status." className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="/invoices">Invoices</Link>
-            <Link title="Open VAT and CIT reports, declaration inputs, and exports." className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="/reports">Reports</Link>
-            <button title="Sign out of the current tenant session." className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" onClick={logout}>Sign out</button>
-          </nav>
-        </div>
-      </header>
+        </header>
 
-      <section className="mx-auto max-w-7xl px-6 py-6">
+        <section className="px-6 py-6">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">Quarter {period}, {year}</h2>
@@ -137,7 +140,8 @@ export default function DashboardPage() {
           </section>
         </div>
       </section>
-    </main>
+      </main>
+      </div>
     </ProtectedPage>
   );
 }

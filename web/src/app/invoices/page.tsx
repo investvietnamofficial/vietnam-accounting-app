@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { ProtectedPage } from "@/components/protected-page";
+import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/components/auth-provider";
 import { useFilteredInvoices, useVerifyEInvoice } from "@/hooks/useApi";
 import type { Invoice } from "@/types";
@@ -75,56 +76,20 @@ export default function InvoicesPage() {
 
   return (
     <ProtectedPage>
-      <main className="min-h-screen bg-slate-50 text-slate-950">
-        {/* Header */}
-        <header className="border-b bg-white">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-            <div>
-              <p className="text-sm text-slate-500">{user?.email}</p>
-              <h1 className="text-2xl font-semibold">Invoices</h1>
+      <div className="flex min-h-screen bg-slate-50 text-slate-950">
+        <Sidebar />
+        <main className="flex-1">
+          <header className="border-b bg-white">
+            <div className="flex items-center justify-between px-6 py-4">
+              <div>
+                <p className="text-sm text-slate-500">{user?.email}</p>
+                <h1 className="text-2xl font-semibold">Invoices</h1>
+              </div>
+              <button className="rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-slate-100" onClick={logout}>Sign out</button>
             </div>
-            <nav className="flex items-center gap-2 text-sm">
-              <Link
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                href="/dashboard"
-              >
-                Dashboard
-              </Link>
-              <Link
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                href="/documents"
-              >
-                Documents
-              </Link>
-              <Link
-                className="rounded-md bg-slate-900 px-3 py-2 text-white"
-                href="/invoices"
-              >
-                Invoices
-              </Link>
-              <Link
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                href="/reports"
-              >
-                Reports
-              </Link>
-              <Link
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                href="/settings"
-              >
-                Settings
-              </Link>
-              <button
-                className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
-                onClick={logout}
-              >
-                Sign out
-              </button>
-            </nav>
-          </div>
-        </header>
+          </header>
 
-        <section className="mx-auto max-w-7xl px-6 py-6 space-y-4">
+          <section className="px-6 py-6 space-y-4">
           {/* Filter Bar */}
           <div className="rounded-lg border bg-white p-4 space-y-3">
             <div className="flex flex-wrap items-end gap-3">
@@ -325,7 +290,8 @@ export default function InvoicesPage() {
             onClose={() => setSelectedInvoice(null)}
           />
         )}
-      </main>
+        </main>
+        </div>
     </ProtectedPage>
   );
 }
