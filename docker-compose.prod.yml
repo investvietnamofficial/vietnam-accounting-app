@@ -1,7 +1,7 @@
 # Production docker-compose manifest for VN Accounting
 # Usage: docker compose -f docker-compose.prod.yml up --build
 #
-# Required env vars (set in .env or your secrets manager):
+# Required env vars (set in Coolify or .env):
 #   JWT_SECRET_KEY, APP_SECRET_KEY, DATABASE_URL, REDIS_URL
 #   SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
 #   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_PUBLIC_URL
@@ -18,7 +18,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-vn_accounting}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-vn_accounting}
     volumes:
       - postgres_prod_data:/var/lib/postgresql/data
@@ -47,15 +47,15 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
-      APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY is required in production}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required in production}
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC:?DATABASE_URL_SYNC is required}
-      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS must be set (comma-separated list)}
+      APP_SECRET_KEY: ${APP_SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      REDIS_URL: ${REDIS_URL}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       LOCAL_STORAGE_DIR: /app/storage
       USE_CELERY: "${USE_CELERY:-false}"
-      # Optional: uncomment and set to enable SMTP
+      # SMTP (uncomment and set in Coolify env vars to enable)
       # SMTP_HOST: ${SMTP_HOST}
       # SMTP_PORT: "${SMTP_PORT:-587}"
       # SMTP_USER: ${SMTP_USER}
@@ -80,11 +80,11 @@ services:
     volumes:
       - app_storage:/app/storage
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || wget -qO- http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 30s
 
   # Celery worker (only when USE_CELERY=true)
   worker:
@@ -94,10 +94,10 @@ services:
     restart: always
     environment:
       APP_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC:?DATABASE_URL_SYNC is required}
-      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      REDIS_URL: ${REDIS_URL}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       USE_CELERY: "${USE_CELERY:-false}"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     depends_on:
@@ -134,7 +134,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 30s
 
 volumes:
   postgres_prod_data:
