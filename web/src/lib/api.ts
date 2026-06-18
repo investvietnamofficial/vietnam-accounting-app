@@ -132,10 +132,33 @@ export const documentsApi = {
     const { data } = await apiClient.get("/documents/", { params });
     return data;
   },
+  retry: async (id: string) => {
+    const { data } = await apiClient.post(`/documents/${id}/retry`);
+    return data;
+  },
+};
+
+export const companiesApi = {
+  getMe: async () => {
+    const { data } = await apiClient.get("/companies/me");
+    return data;
+  },
+  updateMe: async (payload: Record<string, unknown>) => {
+    const { data } = await apiClient.patch("/companies/me", payload);
+    return data;
+  },
 };
 
 export const invoicesApi = {
-  list: async (params?: { page?: number; page_size?: number }) => {
+  list: async (params?: {
+    page?: number;
+    page_size?: number;
+    date_from?: string;
+    date_to?: string;
+    vat_rate?: string;
+    seller?: string;
+    status?: string;
+  }) => {
     const { data } = await apiClient.get("/invoices/", { params });
     return data;
   },
@@ -244,5 +267,23 @@ export const reportsApi = {
       responseType: "blob",
     });
     return response.data;
+  },
+  salesInvoices: async (year: number, period: number, periodType: string) => {
+    const { data } = await apiClient.get("/reports/invoice-list", {
+      params: { year, period, period_type: periodType, invoice_direction: "sale" },
+    });
+    return data;
+  },
+  purchaseInvoices: async (year: number, period: number, periodType: string) => {
+    const { data } = await apiClient.get("/reports/invoice-list", {
+      params: { year, period, period_type: periodType, invoice_direction: "purchase" },
+    });
+    return data;
+  },
+  exceptions: async (year: number, period: number, periodType: string) => {
+    const { data } = await apiClient.get("/reports/exceptions", {
+      params: { year, period, period_type: periodType },
+    });
+    return data;
   },
 };

@@ -118,8 +118,9 @@ class Company(TimestampMixin, Base):
     address: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(String(20))
     email: Mapped[str | None] = mapped_column(String(255))
-    # Circular 200 (large) or Circular 133 (SME)
-    accounting_standard: Mapped[str] = mapped_column(String(10), default="TT200")
+    # VAS (Vietnam Accounting Standards) or IFRS
+    accounting_standard: Mapped[str] = mapped_column(String(10), default="VAS")
+    # monthly or quarterly VAT filing
     vat_declaration_period: Mapped[TaxDeclarationPeriod] = mapped_column(
         Enum(TaxDeclarationPeriod), default=TaxDeclarationPeriod.QUARTERLY
     )
@@ -216,6 +217,8 @@ class Invoice(TimestampMixin, Base):
 
     # Notes
     notes: Mapped[str | None] = mapped_column(Text)
+    # Extraction quality (synced from Document.extraction_confidence after processing)
+    extraction_confidence: Mapped[float | None] = mapped_column(Numeric(5, 4))
 
     document: Mapped["Document"] = relationship("Document", back_populates="invoice")
     journal_entries: Mapped[list["JournalEntry"]] = relationship("JournalEntry", back_populates="invoice")

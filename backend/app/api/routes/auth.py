@@ -1,6 +1,10 @@
 """Auth routes — login, refresh, register, password reset."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import time
+from collections import defaultdict
+from threading import Lock
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,13 +32,43 @@ from app.schemas.auth import (
     UserSummary,
     validate_password_strength,
 )
+from app.services.email.email_service import get_email_service
 
 router = APIRouter()
 settings = get_settings()
 
+# ── In-memory rate limiter: 5 login attempts per minute per IP ───────────────
+_login_lock = Lock()
+_rate_store: dict[str, list[float]] = defaultdict(list)
+
+_LOGIN_RATE_LIMIT = 5
+_LOGIN_WINDOW_SECS = 60
+
+
+def _check_rate_limit(ip: str) -> bool:
+    """Return True if request is allowed, False if rate limited."""
+    now = time.time()
+    with _login_lock:
+        window = [t for t in _rate_store[ip] if now - t < _LOGIN_WINDOW_SECS]
+        _rate_store[ip] = window
+        if len(window) >= _LOGIN_RATE_LIMIT:
+            return False
+        window.append(now)
+        return True
+
 
 @router.post("/token", response_model=AuthTokenResponse)
-async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+async def login(
+    request: Request,
+    form: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+):
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please wait a minute before trying again.",
+        )
     result = await db.execute(select(User).where(User.email == form.username.strip().lower()))
     user = result.scalar_one_or_none()
     if not user or not verify_password(form.password, user.hashed_password):
@@ -103,11 +137,16 @@ async def register(
 async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email.strip().lower()))
     user = result.scalar_one_or_none()
-    reset_token = create_password_reset_token(user.id) if user and user.is_active else None
-    return {
-        "message": "If the account exists, password reset instructions have been generated.",
-        "reset_token": reset_token if not settings.is_production else None,
-    }
+
+    # Always return the same message to avoid email enumeration
+    message = "If the account exists, a password reset email has been sent."
+
+    if user and user.is_active:
+        reset_token = create_password_reset_token(user.id)
+        email_service = get_email_service()
+        email_service.send_password_reset_email(user.email, reset_token)
+
+    return {"message": message}
 
 
 @router.post("/password/reset", response_model=AuthTokenResponse)

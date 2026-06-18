@@ -54,6 +54,9 @@ python-slugify==8.0.4
 pendulum==3.0.0
 structlog==24.1.0
 
+# Error tracking
+sentry-sdk==2.3.1
+
 # Testing
 pytest==8.2.0
 pytest-asyncio==0.23.6

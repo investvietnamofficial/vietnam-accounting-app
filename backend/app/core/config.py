@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     # App
     app_env: str = "development"
-    app_secret_key: str = "changeme"
+    app_secret_key: str = ""
     app_debug: bool = True
     allowed_origins: list[str] = [
         "http://localhost:3000",
@@ -25,11 +25,29 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # JWT
-    jwt_secret_key: str = "changeme-jwt"
+    jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 30
     password_reset_token_expire_minutes: int = 30
+
+    # SMTP
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
+
+    # Sentry
+    sentry_dsn: str = ""
+
+    def model_post_init(self, *args, **kwargs):
+        if self.app_env == "production":
+            if not self.jwt_secret_key:
+                raise ValueError("JWT_SECRET_KEY must be set in production")
+            if not self.app_secret_key or self.app_secret_key in ("", "changeme"):
+                raise ValueError("APP_SECRET_KEY must be set to a secure random value in production")
 
     # Google Vision
     ocr_engine: str = "paddle"  # paddle | google | mock
@@ -57,12 +75,6 @@ class Settings(BaseSettings):
     gdt_api_username: str = ""
     gdt_api_password: str = ""
     gdt_tax_code: str = ""
-
-    # Email
-    smtp_host: str = "smtp.gmail.com"
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
 
     @property
     def is_production(self) -> bool:

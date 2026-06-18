@@ -1,53 +1,68 @@
 from contextlib import asynccontextmanager
+import uuid
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, engine
 from app.core.config import get_settings
-from app.core.security import hash_password
 from app.api.routes import auth, companies, documents, invoices, reports
-from app.models import Company, User, UserRole
+
+settings = get_settings()
+
+# ── Structured logging configuration ─────────────────────────────────────────
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()
+        if settings.is_production
+        else structlog.dev.ConsoleRenderer(),
+    ],
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+    cache_logger_on_first_use=False,
+)
 
 logger = structlog.get_logger()
-settings = get_settings()
+
+
+def configure_sentry():
+    """Wire Sentry if DSN is configured."""
+    if not settings.sentry_dsn:
+        return
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlAlchemyIntegration
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.app_env,
+            integrations=[
+                FastApiIntegration(transaction_style="endpoint"),
+                SqlAlchemyIntegration(),
+            ],
+            # Scrub tokens and passwords from events
+            send_default_pii=False,
+        )
+        logger.info("sentry_initialized", dsn_masked="***")
+    except Exception as exc:
+        logger.warning("sentry_init_failed", error=str(exc))
+
+
+configure_sentry()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting VN Accounting API", env=settings.app_env)
-    if settings.seed_demo_data and not settings.is_production:
-        await seed_demo_data()
+    logger.info("app_starting", env=settings.app_env, version="0.1.0")
     yield
-    logger.info("Shutting down VN Accounting API")
-
-
-async def seed_demo_data():
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.email == "demo@vnaccounting.local"))
-        if result.scalar_one_or_none():
-            return
-
-        company = Company(
-            name="Cong ty TNHH Demo Viet Nam",
-            tax_code="0101243150",
-            address="Quan 1, TP Ho Chi Minh",
-            accounting_standard="TT200",
-        )
-        db.add(company)
-        await db.flush()
-
-        user = User(
-            email="demo@vnaccounting.local",
-            hashed_password=hash_password("demo123456"),
-            full_name="Demo Accountant",
-            role=UserRole.ADMIN,
-            company_id=company.id,
-        )
-        db.add(user)
-        await db.commit()
+    logger.info("app_shutting_down")
 
 
 app = FastAPI(
@@ -58,6 +73,28 @@ app = FastAPI(
     docs_url="/api/docs" if not settings.is_production else None,
     redoc_url="/api/redoc" if not settings.is_production else None,
 )
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Inject request_id into every log entry."""
+    request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id=request_id)
+    response = await call_next(request)
+    response.headers["x-request-id"] = request_id
+    return response
+
+
+# ── Global exception handler — never leak internals ───────────────────────────
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("unhandled_exception", path=str(request.url.path), exc=str(exc))
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,3 +115,40 @@ app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
 @app.get("/health")
 async def health():
     return {"status": "ok", "env": settings.app_env}
+
+
+@app.get("/healthz")
+async def healthz():
+    """
+    Deep health check: verifies DB and Redis connectivity.
+    Used by load balancers and orchestrators in production.
+    """
+    checks = {"db": "unknown", "redis": "unknown"}
+
+    # DB check
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+            checks["db"] = "ok"
+    except Exception as exc:
+        logger.error("healthz_db_check_failed", error=str(exc))
+        checks["db"] = f"error: {exc}"
+
+    # Redis check
+    try:
+        import redis.asyncio as redis
+
+        r = redis.from_url(settings.redis_url)
+        await r.ping()
+        await r.aclose()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        logger.warning("healthz_redis_check_failed", error=str(exc))
+        checks["redis"] = f"error: {exc}"
+
+    overall = "ok" if checks["db"] == "ok" else "degraded"
+    return {
+        "status": overall,
+        "env": settings.app_env,
+        "checks": checks,
+    }

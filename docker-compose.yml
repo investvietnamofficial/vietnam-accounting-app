@@ -38,7 +38,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
       DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: dev-jwt-secret
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret}
       LOCAL_STORAGE_DIR: /app/storage
       USE_CELERY: "false"
     depends_on:
@@ -61,7 +61,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
       DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: dev-jwt-secret
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret}
     depends_on:
       postgres:
         condition: service_healthy

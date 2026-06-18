@@ -29,11 +29,12 @@ export interface Company {
 // ============================================================
 
 export type DocumentStatus =
+  | "uploaded"
   | "pending"
   | "processing"
   | "extracted"
   | "verified"
-  | "rejected";
+  | "failed";
 
 export type DocumentType =
   | "invoice_vat"
@@ -268,4 +269,151 @@ export interface RegisterPayload {
 export interface ForgotPasswordResponse {
   message: string;
   reset_token?: string | null;
+}
+
+// ============================================================
+// Company Settings
+// ============================================================
+
+export interface CompanySettings {
+  id: string;
+  name: string;
+  tax_code: string;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  accounting_standard: "TT200" | "TT133";
+  vat_declaration_period: "monthly" | "quarterly";
+  fiscal_year_start_month: number;
+}
+
+// ============================================================
+// Invoice List (with filters)
+// ============================================================
+
+export interface InvoiceListParams {
+  page?: number;
+  page_size?: number;
+  date_from?: string;
+  date_to?: string;
+  vat_rate?: string;
+  seller?: string;
+  status?: string;
+}
+
+export interface InvoiceListResponse {
+  page: number;
+  page_size: number;
+  total: number;
+  items: Invoice[];
+}
+
+// ============================================================
+// Report Types
+// ============================================================
+
+export interface ReportWarning {
+  type: string;
+  message: string;
+  invoice_ids: string[];
+}
+
+export interface VatSummaryReport {
+  year: number;
+  period: number;
+  period_type: "monthly" | "quarterly";
+  input_vat_total: number;
+  output_vat_total: number;
+  net_vat: number;
+  payable_vat: number;
+  carry_forward_vat: number;
+  refund_requested_vat: number;
+  by_rate: {
+    rate: VATRate;
+    input_amount: number;
+    output_amount: number;
+    input_vat: number;
+    output_vat: number;
+  }[];
+  declaration_deadline: string;
+  filing_fields: Record<string, number | string | boolean>;
+  inputs: {
+    previous_vat_credit: number;
+    import_purchase_value: number;
+    import_purchase_vat: number;
+    deductible_input_vat_override: number | null;
+    adjustment_decrease: number;
+    adjustment_increase: number;
+    transferred_vat_credit: number;
+    investment_project_offset_vat: number;
+    refund_requested_vat: number;
+  };
+  purchase_annex: VATAnnex;
+  sales_annex: VATAnnex;
+  validation_issues: string[];
+}
+
+export interface InvoiceReportRow {
+  stt: number;
+  id: string;
+  direction: "purchase" | "sale";
+  invoice_date: string | null;
+  invoice_series: string | null;
+  invoice_number: string | null;
+  counterparty_name: string | null;
+  counterparty_tax_code: string | null;
+  seller_name: string | null;
+  seller_tax_code: string | null;
+  buyer_name: string | null;
+  buyer_tax_code: string | null;
+  subtotal_amount: number;
+  vat_rate: VATRate;
+  vat_amount: number;
+  total_amount: number;
+  einvoice_verified: boolean;
+  confidence?: number | null;
+}
+
+export interface SalesInvoicesReport {
+  year: number;
+  period: number;
+  period_type: "monthly" | "quarterly";
+  items: InvoiceReportRow[];
+  total: number;
+  period_label: string;
+}
+
+export interface PurchaseInvoicesReport {
+  year: number;
+  period: number;
+  period_type: "monthly" | "quarterly";
+  items: InvoiceReportRow[];
+  total: number;
+  period_label: string;
+}
+
+export interface ExceptionIssue {
+  type: string;
+  message: string;
+  invoice_ids: string[];
+  count: number;
+}
+
+export interface ExceptionsReport {
+  year: number;
+  period: number;
+  period_type: "monthly" | "quarterly";
+  issues: ExceptionIssue[];
+  total_issues: number;
+}
+
+// ============================================================
+// Document retry
+// ============================================================
+
+export interface RetryDocumentResponse {
+  document_id: string;
+  job_id: string;
+  status: DocumentStatus;
+  message: string;
 }

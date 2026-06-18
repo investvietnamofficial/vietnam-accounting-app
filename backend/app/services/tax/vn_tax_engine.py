@@ -10,12 +10,16 @@ References used for the implemented rules:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from app.models import VATRate
+
+if TYPE_CHECKING:
+    from app.models import Invoice
 
 
 # ---------------------------------------------------------------------------
@@ -281,3 +285,140 @@ def get_cit_quarter_payment_deadline(year: int, quarter: int) -> str:
     else:
         deadline = date(year, quarter * 3 + 1, 30)
     return _move_to_next_business_day(deadline).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Invoice Validation / Issue Detection
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InvoiceIssue:
+    type: str
+    message: str
+    invoice_ids: list[str]
+    count: int
+
+
+@dataclass
+class InvoiceValidationResult:
+    issues: list[InvoiceIssue]
+    total_invoices: int
+
+
+def detect_duplicate_invoices(invoices: list["Invoice"]) -> InvoiceIssue | None:
+    """
+    Detect invoices with the same invoice_number + seller_name + invoice_date.
+    Groups by key and returns any groups with > 1 invoice.
+    """
+    seen: dict[str, list[str]] = {}
+    for inv in invoices:
+        if not inv.invoice_number or not inv.seller_name or not inv.invoice_date:
+            continue
+        date_str = inv.invoice_date.date().isoformat() if hasattr(inv.invoice_date, "date") else str(inv.invoice_date)[:10]
+        key = f"{inv.invoice_number}|{inv.seller_name.strip().lower()}|{date_str}"
+        seen.setdefault(key, []).append(inv.id)
+
+    dup_groups = [ids for ids in seen.values() if len(ids) > 1]
+    if not dup_groups:
+        return None
+
+    flat_ids: list[str] = []
+    for group in dup_groups:
+        flat_ids.extend(group)
+
+    return InvoiceIssue(
+        type="duplicate",
+        message=(
+            f"Found {len(dup_groups)} group(s) of duplicate invoices: "
+            f"same invoice_number + seller_name + invoice_date"
+        ),
+        invoice_ids=flat_ids,
+        count=len(flat_ids),
+    )
+
+
+def detect_missing_mst(invoices: list["Invoice"]) -> InvoiceIssue | None:
+    """
+    Detect invoices where seller_tax_code is null or empty.
+    """
+    affected = [
+        inv.id
+        for inv in invoices
+        if not (inv.seller_tax_code and inv.seller_tax_code.strip())
+    ]
+    if not affected:
+        return None
+
+    return InvoiceIssue(
+        type="missing_mst",
+        message="Invoice(s) missing seller MST (tax code is null or empty)",
+        invoice_ids=affected,
+        count=len(affected),
+    )
+
+
+def detect_low_confidence(invoices: list["Invoice"], threshold: float = 0.8) -> InvoiceIssue | None:
+    """
+    Detect invoices where extraction_confidence < threshold.
+    Only checks invoices that have a confidence value set.
+    """
+    affected = [
+        inv.id
+        for inv in invoices
+        if inv.extraction_confidence is not None and float(inv.extraction_confidence) < threshold
+    ]
+    if not affected:
+        return None
+
+    return InvoiceIssue(
+        type="low_confidence",
+        message=f"Invoice(s) with extraction confidence below {threshold}",
+        invoice_ids=affected,
+        count=len(affected),
+    )
+
+
+def detect_vat_mismatch(invoices: list["Invoice"]) -> InvoiceIssue | None:
+    """
+    Detect invoices where declared VAT amount does not match subtotal * vat_rate.
+    Uses the same tolerance (≤ 1 VND) as validate_vat_amount().
+    """
+    affected = []
+    for inv in invoices:
+        subtotal = int(inv.subtotal_amount or 0)
+        declared_vat = int(inv.vat_amount or 0)
+        if subtotal == 0 and declared_vat == 0:
+            continue
+        expected_vat = round_vnd(Decimal(subtotal) * VAT_RATE_MAP.get(inv.vat_rate, Decimal("0")))
+        if abs(expected_vat - declared_vat) > 1:
+            affected.append(inv.id)
+
+    if not affected:
+        return None
+
+    return InvoiceIssue(
+        type="vat_mismatch",
+        message="Invoice(s) where declared VAT amount does not match subtotal × VAT rate",
+        invoice_ids=affected,
+        count=len(affected),
+    )
+
+
+def validate_invoices(invoices: list["Invoice"]) -> InvoiceValidationResult:
+    """
+    Run all invoice validation checks and return structured results.
+    """
+    issues: list[InvoiceIssue] = []
+
+    for detector in (
+        detect_missing_mst,
+        detect_duplicate_invoices,
+        detect_low_confidence,
+        detect_vat_mismatch,
+    ):
+        issue = detector(invoices)
+        if issue:
+            issues.append(issue)
+
+    return InvoiceValidationResult(issues=issues, total_invoices=len(invoices))
