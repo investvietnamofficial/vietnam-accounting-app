@@ -23,7 +23,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://vn_accounting:testpass123@postgres:5432/vn_accounting
       DATABASE_URL_SYNC: postgresql://vn_accounting:testpass123@postgres:5432/vn_accounting
       REDIS_URL: redis://redis:6379/0
-      ALLOWED_ORIGINS: http://localhost
+      ALLOWED_ORIGINS: '["http://localhost:3000","http://localhost:8000"]'
     depends_on:
       - postgres
       - redis
