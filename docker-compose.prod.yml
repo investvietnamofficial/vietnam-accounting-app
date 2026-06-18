@@ -3,11 +3,9 @@ services:
     image: postgres:15-alpine
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-vn_accounting}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-vn_accounting}
-    volumes:
-      - postgres_prod_data:/var/lib/postgresql/data
+      POSTGRES_USER: vn_accounting
+      POSTGRES_PASSWORD: testpass123
+      POSTGRES_DB: vn_accounting
 
   redis:
     image: redis:7-alpine
@@ -18,56 +16,14 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: always
-    ports:
-      - "8000:8000"
     environment:
       APP_ENV: production
-      APP_DEBUG: "false"
-      APP_SECRET_KEY: ${APP_SECRET_KEY}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
-      DATABASE_URL: ${DATABASE_URL}
-      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
-      REDIS_URL: ${REDIS_URL}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
-      LOCAL_STORAGE_DIR: /app/storage
-      USE_CELERY: "${USE_CELERY:-false}"
+      APP_SECRET_KEY: testsecret123456789012345678901234567890
+      JWT_SECRET_KEY: testjwt123456789012345678901234567890
+      DATABASE_URL: postgresql+asyncpg://vn_accounting:testpass123@postgres:5432/vn_accounting
+      DATABASE_URL_SYNC: postgresql://vn_accounting:testpass123@postgres:5432/vn_accounting
+      REDIS_URL: redis://redis:6379/0
+      ALLOWED_ORIGINS: http://localhost
     depends_on:
-      postgres:
-        condition: service_started
-      redis:
-        condition: service_started
-    volumes:
-      - app_storage:/app/storage
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || wget -qO- http://localhost:8000/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
-
-  web:
-    build:
-      context: ./web
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
-        NEXT_PUBLIC_APP_ENV: production
-    restart: always
-    ports:
-      - "3000:3000"
-    environment:
-      NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
-      NEXT_PUBLIC_APP_ENV: production
-    depends_on:
-      - backend
-    labels:
-      - "coolify.override.fqdn=vn-accounting.178.105.157.205.sslip.io"
-      - "traefik.enable=true"
-      - "traefik.http.routers.vnAccounting.rule=Host(`vn-accounting.178.105.157.205.sslip.io`)"
-      - "traefik.http.routers.vnAccounting.entrypoints=web,websecure"
-      - "traefik.http.services.vnAccounting.loadbalancer.server.port=3000"
-
-volumes:
-  postgres_prod_data:
-  app_storage:
+      - postgres
+      - redis
