@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AlertTriangle, Download } from "lucide-react";
 import { ProtectedPage } from "@/components/protected-page";
+import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/components/auth-provider";
 import { useCITProvisional, useExportVATDeclaration, useVATSummary } from "@/hooks/useApi";
 import type { VATSummary } from "@/types";
@@ -87,23 +88,27 @@ export default function ReportsPage() {
 
   return (
     <ProtectedPage>
-      <main className="min-h-screen bg-slate-50 text-slate-950">
-        <header className="border-b bg-white">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div>
-            <p className="text-sm text-slate-500">{user?.email}</p>
-            <h1 className="text-2xl font-semibold">Tax Reports</h1>
-          </div>
-          <nav className="flex items-center gap-2 text-sm">
-              <Link title="Return to the dashboard overview, uploads, and recent invoices." className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="/dashboard">Dashboard</Link>
-              <Link title="Open the invoice register for row-level review." className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" href="/invoices">Invoices</Link>
-              <Link title="Stay on the tax reports workspace with declaration fields and exports." className="rounded-md bg-slate-900 px-3 py-2 text-white" href="/reports">Reports</Link>
-              <button title="Sign out of the current tenant session." className="rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100" onClick={logout}>Sign out</button>
-          </nav>
-        </div>
-      </header>
+      <div className="flex min-h-screen bg-slate-50 text-slate-950">
+        <Sidebar />
+        <main className="flex-1">
+          <header className="border-b bg-white">
+            <div className="flex items-center justify-between px-6 py-4">
+              <div>
+                <p className="text-sm text-slate-500">{user?.email}</p>
+                <h1 className="text-2xl font-semibold">Tax Reports</h1>
+              </div>
+              <nav className="flex flex-wrap items-center gap-1 text-sm">
+                <Link className="rounded-md px-2 py-1.5 text-slate-600 hover:bg-slate-100" href="/reports/vat-summary">VAT Summary</Link>
+                <Link className="rounded-md bg-slate-900 px-2 py-1.5 text-white" href="/reports">Overview</Link>
+                <Link className="rounded-md px-2 py-1.5 text-slate-600 hover:bg-slate-100" href="/reports/sales-invoices">Sales Invoices</Link>
+                <Link className="rounded-md px-2 py-1.5 text-slate-600 hover:bg-slate-100" href="/reports/purchase-invoices">Purchase Invoices</Link>
+                <Link className="rounded-md px-2 py-1.5 text-slate-600 hover:bg-slate-100" href="/reports/exceptions">Exceptions</Link>
+                <button className="rounded-md px-2 py-1.5 text-slate-600 hover:bg-slate-100" onClick={logout}>Sign out</button>
+              </nav>
+            </div>
+          </header>
 
-        <section className="mx-auto max-w-7xl px-6 py-6">
+          <section className="px-6 py-6">
           <div className="mb-6 flex flex-wrap items-end gap-3 rounded-lg border bg-white p-4">
             <label className="grid gap-1 text-sm">
               <span className="text-slate-500">Year</span>
@@ -271,7 +276,8 @@ export default function ReportsPage() {
             </section>
           </div>
         </section>
-      </main>
+        </main>
+        </div>
     </ProtectedPage>
   );
 }
