@@ -4,31 +4,40 @@ This file is the single source of truth for AI agents working in `vn-accounting`
 
 ## Product
 
-VN Accounting is a tenant-aware Vietnam accounting compliance product with:
-- FastAPI backend for auth, document ingestion, OCR/extraction, invoice storage, GDT e-invoice verification, and VAT/CIT reporting.
-- Next.js 14 web app for authenticated dashboard, invoice review, and tax-report workflows.
-- Flutter mobile scanner app for invoice capture and upload.
+VN Accounting is a **lean VAT-reporting product** — nothing else is in scope until the core flow is production-hardened.
 
-Core flow:
-1. Register a tenant and admin user.
-2. Upload invoice image/PDF.
-3. Store file in R2 or local storage fallback.
-4. OCR + extraction create/update invoice records.
-5. Operators review invoices and generate VAT/CIT reporting outputs.
+**The only product:**
+> Upload → OCR → Extract → Verify → Report → Export
+
+**Target user:** Paying customers who need VAT-ready tax reports from uploaded accounting documents.
+
+What this means in practice:
+- FastAPI backend handles document upload, OCR+extraction pipeline, GDT e-invoice verification, and VAT/CIT report generation with XLSX export.
+- Next.js 14 web app provides the authenticated operator workflow: upload, review invoices, run reports, export.
+- Flutter mobile app provides invoice capture and upload (scanner-first; other mobile flows are ROADMAP).
+- All monetary values are stored as integer VND.
+
+What this product does NOT include (ROADMAP / deferred):
+- Full accounting system (journal entries, chart of accounts UI, general ledger)
+- Filing submission workflows
+- Payroll, inventory, or multi-period bookkeeping
+- Role enforcement beyond baseline auth
+- PDF export (stub only)
 
 ## Architecture
 
 - `backend/app/main.py`: FastAPI entrypoint with lifespan boot and route registration.
 - `backend/app/api/routes/`: routers for `auth`, `companies`, `documents`, `invoices`, `reports`.
-- `backend/app/models/__init__.py`: SQLAlchemy models for companies, users, documents, invoices, chart of accounts, journal entries.
+- `backend/app/models/__init__.py`: SQLAlchemy models. Core models for the product are `Document` and `Invoice`. `JournalEntry` and `ChartOfAccount` exist but are not yet wired into the core flow (see ROADMAP).
 - `backend/app/workers/tasks.py`: document-processing pipeline; Celery path or inline local fallback.
 - `backend/app/services/ocr/`: OCR extraction and preprocessing.
 - `backend/app/services/extraction/`: structured invoice extraction from OCR text.
 - `backend/app/services/einvoice/`: GDT verification client.
 - `backend/app/services/tax/`: VAT/CIT helpers and filing logic.
+- `backend/app/services/storage/r2_service.py`: R2 or local filesystem storage.
 - `web/src/app/`: authenticated dashboard, invoices, reports, auth flows.
 - `web/src/lib/api.ts`: axios client and web/backend contract.
-- `mobile/lib/`: scanner-first Flutter client; still incomplete.
+- `mobile/lib/`: scanner-first Flutter client; other mobile flows are deferred.
 
 Data shape assumptions:
 - Monetary values are stored as integer VND.
@@ -148,12 +157,31 @@ Do not describe this repo as production-ready.
 
 ## Current Reality Check
 
-- Backend auth, upload, OCR/extraction, invoice persistence, GDT verification, and reporting routes exist.
-- Report logic is stronger than the old MVP version but still depends on operator-provided adjustment inputs and accurate posted journal entries.
-- Invoice filters and company settings APIs are still partial.
-- Mobile app is not production-ready.
-- Password reset is token-based but does not send real email.
-- Local git history is absent in the current workspace snapshot unless initialized during the current session.
+**What works:**
+- Tenant registration (company + admin user)
+- Document upload → OCR → extraction pipeline (upload/OCR/extract/verify end-to-end)
+- Invoice records created automatically from extracted data
+- GDT e-invoice verification (gracefully degrades if not configured)
+- VAT summary with full 01/GTGT declaration field computation
+- Invoice list report with purchase/sales annexes
+- CIT provisional calculation (requires posted journal entries to be meaningful)
+- XLSX export of VAT declaration with annex sheets
+- JWT auth with refresh token rotation
+- Web TypeScript compile passes
+
+**What is partial or not yet production-ready:**
+- Password reset generates tokens but does not send real email.
+- Invoice list has no filters (date, VAT rate, seller, verification status).
+- Company settings API (`companies.py`) returns raw models, not full typed settings.
+- Failed-document retry exists in backend but is not exposed in the web UI.
+- PDF VAT export is not implemented (returns HTTP 501).
+- Report adjustments are passed as query parameters, not persisted.
+- Invoice/GDT verification notes view is table-only.
+- CIT provisional depends on `JournalEntry` records — no JE authoring UI exists yet.
+- Public holiday-aware filing deadline handling is not implemented (only weekends accounted for).
+- Mobile app is scanner-only; dashboard/invoices/login routes are stub TODOs.
+- Chart of accounts and journal entry models exist in DB but have no authoring UI or dedicated API.
+- Local git history is absent in the current workspace snapshot.
 
 ## Session Discipline
 

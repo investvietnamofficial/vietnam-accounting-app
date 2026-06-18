@@ -2,35 +2,56 @@
 
 ## High Priority
 
-- [ ] Replace password-reset token display with real SMTP-backed delivery and audit the full reset flow end to end.
-- [ ] Finish company settings API and UI for accounting standard, VAT filing period, and tenant profile management.
-- [ ] Add invoice list filters in backend and web for date range, VAT rate, seller/buyer, and verification status.
-- [ ] Expose failed-document and retry workflow in the web UI using the existing backend retry route.
-- [ ] Harden report workflows with persisted adjustment inputs or a filing-draft model instead of transient query params.
-- [ ] Add production-grade deployment path for backend, worker, web, env management, and non-dev startup commands.
+- [ ] Wire real SMTP email delivery for password reset (tokens are generated but no email is sent).
+- [ ] Add invoice list filters in backend and web: date range, VAT rate, seller/buyer, and GDT verification status.
+- [ ] Persist tax-report adjustment inputs as a filing-draft model instead of passing them as transient query parameters.
+- [ ] Expose the existing backend failed-document retry route in the web UI.
+- [ ] Implement PDF VAT export (`reports.py` currently returns HTTP 501).
+- [ ] Define a production deployment target and replace dev-only startup commands (`uvicorn --reload`, `npm run dev`).
 
 ## Medium Priority
 
 - [ ] Add gold-fixture regression coverage for VNPT, VIETTEL, and MISA invoice samples.
-- [ ] Add public-holiday-aware deadline handling for VAT/CIT filing dates.
+- [ ] Add public holiday-aware deadline handling for VAT/CIT filing dates (currently only weekends).
 - [ ] Expand role enforcement beyond baseline authenticated access on non-auth routes.
 - [ ] Add document security scanning and clearer file-validation telemetry.
-- [ ] Add operator detail view for invoice/GDT verification notes instead of the current table-only workflow.
-- [ ] Build dashboard and invoices pages on typed API responses instead of `any`-heavy rendering paths.
+- [ ] Add invoice detail view with GDT verification notes instead of the current table-only workflow.
+- [ ] Replace broad `dict` payload handling in `companies.py` with typed Pydantic schemas.
+- [ ] Build all web pages on typed API responses instead of `any`-heavy rendering paths.
 
 ## Technical Debt
 
 - [ ] Remove or explicitly quarantine `seed_demo_data()` and any remaining demo-mode assumptions.
 - [ ] Resolve legacy/stale docs drift between `README.md`, `docs/CODEX_HANDOFF.md`, and the new root docs.
-- [ ] Replace broad `dict` payload handling in `companies.py` with typed schemas and validation.
 - [ ] Normalize timezone handling where `datetime.utcnow()` is still used directly.
 - [ ] Review local-storage fallback assumptions in `r2_service.py` for clearer dev/prod separation.
-- [ ] Finish mobile router and offline-upload TODOs or mark the mobile client as experimental in-product.
+- [ ] Complete mobile router and scanner-only status or formally mark the mobile client as experimental.
 
-## Future Ideas
+---
 
-- [ ] Persist filing drafts, attachments, reviewer sign-off, and filing history per period.
-- [ ] Add PDF export that mirrors the 01/GTGT workbook layout.
-- [ ] Add accounting journal-entry authoring UI on top of the existing models.
-- [ ] Add automated anomaly checks for invalid MSTs, VAT mismatches, and extraction confidence drops.
-- [ ] Add multi-period tax calendar views and reminders per tenant.
+## Future Roadmap
+
+The following features are intentionally deferred. They are valid, valuable products — but they are not part of the Upload → OCR → Extract → Verify → Report → Export core. Do not build these until the core flow is production-hardened.
+
+### Core Flow Extensions
+- [ ] Filing submission workflows (GDT portal e-filing integration, draft sign-off, submission history)
+- [ ] PDF VAT export that mirrors the official 01/GTGT workbook layout
+- [ ] Automated anomaly checks for invalid MSTs, VAT mismatches, and extraction confidence drops
+
+### Accounting Bookkeeping (experimental — models exist, no UI/API)
+- [ ] Journal entry authoring UI (POST/PATCH/DELETE journal entries, post/reverse workflow)
+- [ ] Chart of accounts UI (seed standard COA, company-level customization)
+- [ ] CIT provisional endpoint requires posted journal entries to be meaningful — wire JE flow first
+
+### Tenant Operations
+- [ ] Multi-period tax calendar views and filing reminders per tenant
+- [ ] Per-tenant filing history and audit trail
+
+### Mobile
+- [ ] Mobile dashboard and invoice list views (router has only `/scanner`; `/dashboard`, `/invoices`, `/login` are stub TODOs)
+- [ ] Offline upload queue with sync-on-reconnect
+
+### Full-Stack Accounting (out of scope entirely)
+- [ ] Payroll module
+- [ ] Inventory management
+- [ ] Full ERP workflows
