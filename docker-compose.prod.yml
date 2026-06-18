@@ -3,27 +3,56 @@ services:
     image: postgres:15-alpine
     restart: always
     environment:
-      POSTGRES_USER: vn_accounting
-      POSTGRES_PASSWORD: testpass123
-      POSTGRES_DB: vn_accounting
+      POSTGRES_USER: ${POSTGRES_USER:-vn_accounting}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-testpass123}
+      POSTGRES_DB: ${POSTGRES_DB:-vn_accounting}
 
   redis:
     image: redis:7-alpine
     restart: always
 
   backend:
+    image: vn-accounting-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        BUILD_DATE: "2026-18"
     restart: always
     environment:
-      APP_ENV: production
-      APP_SECRET_KEY: testsecret123456789012345678901234567890
-      JWT_SECRET_KEY: testjwt123456789012345678901234567890
-      DATABASE_URL: postgresql+asyncpg://vn_accounting:testpass123@postgres:5432/vn_accounting
-      DATABASE_URL_SYNC: postgresql://vn_accounting:testpass123@postgres:5432/vn_accounting
-      REDIS_URL: redis://redis:6379/0
-      ALLOWED_ORIGINS: '["http://localhost:3000","http://localhost:8000"]'
+      APP_ENV: ${APP_ENV:-production}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-changeme}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-changeme}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://vn_accounting:testpass123@postgres:5432/vn_accounting}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC:-postgresql://vn_accounting:testpass123@postgres:5432/vn_accounting}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-'["http://localhost:3000","http://localhost:8000"]'}
     depends_on:
       - postgres
       - redis
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || wget -qO- http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    command: >
+      sh -c "alembic -c alembic.ini upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  web:
+    image: vn-accounting-web:latest
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
+        NEXT_PUBLIC_APP_ENV: production
+        BUILD_DATE: "2026-18"
+    restart: always
+    depends_on:
+      - backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vnAccounting.rule=Host(`vn-accounting.178.105.157.205.sslip.io`)"
+      - "traefik.http.routers.vnAccounting.entrypoints=web,websecure"
+      - "traefik.http.services.vnAccounting.loadbalancer.server.port=3000"
