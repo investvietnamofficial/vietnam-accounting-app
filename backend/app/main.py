@@ -152,3 +152,42 @@ async def healthz():
         "env": settings.app_env,
         "checks": checks,
     }
+
+
+@app.get("/debug/db")
+async def debug_db():
+    """
+    TEMPORARY: returns DB state snapshot for deployment verification.
+    Lists tables, Alembic version, and sample row counts.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            # List tables
+            tables = await db.execute(text("""
+                SELECT tablename FROM pg_tables WHERE schemaname='public'
+                ORDER BY tablename
+            """))
+            table_list = [r[0] for r in tables.fetchall()]
+
+            # Alembic version
+            ver = await db.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+            alembic_ver = ver.scalar()
+
+            # Row counts for core tables
+            counts = {}
+            for t in ["companies", "documents", "invoices", "users", "journal_entries"]:
+                try:
+                    r = await db.execute(text(f"SELECT count(*) FROM {t}"))
+                    counts[t] = r.scalar()
+                except Exception:
+                    counts[t] = "table_not_found"
+
+            return {
+                "status": "ok",
+                "tables": table_list,
+                "alembic_version": alembic_ver,
+                "row_counts": counts,
+            }
+    except Exception as exc:
+        logger.error("debug_db_failed", error=str(exc))
+        return {"status": "error", "detail": str(exc)}, 500
