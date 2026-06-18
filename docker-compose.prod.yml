@@ -1,16 +1,16 @@
 # Production docker-compose manifest for VN Accounting
 # Usage: docker compose -f docker-compose.prod.yml up --build
 #
-# Required env vars (set in Coolify or .env):
-#   JWT_SECRET_KEY, APP_SECRET_KEY, DATABASE_URL, REDIS_URL
-#   SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
-#   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_PUBLIC_URL
-#   SENTRY_DSN
+# Required env vars (set in Coolify):
+#   APP_SECRET_KEY, JWT_SECRET_KEY
+#   POSTGRES_PASSWORD
+#   DATABASE_URL, DATABASE_URL_SYNC
+#   REDIS_URL
+#   ALLOWED_ORIGINS
 #
 # Optional:
-#   NEXT_PUBLIC_API_URL (defaults to http://backend:8000)
-#   GDT_API_USERNAME, GDT_API_PASSWORD, GDT_TAX_CODE
-#   ANTHROPIC_API_KEY
+#   NEXT_PUBLIC_API_URL, USE_CELERY, ANTHROPIC_API_KEY
+#   SMTP_*, SENTRY_DSN, R2_*, GDT_*, OCR_*
 
 services:
   postgres:
@@ -22,20 +22,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-vn_accounting}
     volumes:
       - postgres_prod_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vn_accounting}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   redis:
     image: redis:7-alpine
     restart: always
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
   backend:
     build:
@@ -55,24 +45,6 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       LOCAL_STORAGE_DIR: /app/storage
       USE_CELERY: "${USE_CELERY:-false}"
-      # SMTP (uncomment and set in Coolify env vars to enable)
-      TEST_INJECT: ${TEST_INJECT:-not_set}
-      # SMTP_HOST: ${SMTP_HOST}
-      # SMTP_PORT: "${SMTP_PORT:-587}"
-      # SMTP_USER: ${SMTP_USER}
-      # SMTP_PASSWORD: ${SMTP_PASSWORD}
-      # SMTP_FROM: ${SMTP_FROM}
-      # SMTP_USE_TLS: "${SMTP_USE_TLS:-true}"
-      # SENTRY_DSN: ${SENTRY_DSN}
-      # OCR & AI
-      # OCR_ENGINE: paddle
-      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      # R2 storage
-      # R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
-      # R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
-      # R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
-      # R2_PUBLIC_URL: ${R2_PUBLIC_URL}
-      # R2_BUCKET_NAME: ${R2_BUCKET_NAME:-vn-accounting-documents}
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,14 +52,24 @@ services:
         condition: service_healthy
     volumes:
       - app_storage:/app/storage
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || wget -qO- http://localhost:8000/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
 
-  # Celery worker (only when USE_CELERY=true)
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
+        NEXT_PUBLIC_APP_ENV: production
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
+      NEXT_PUBLIC_APP_ENV: production
+    depends_on:
+      - backend
+
   worker:
     build:
       context: ./backend
@@ -113,29 +95,6 @@ services:
     command: >
       bash -lc "alembic -c alembic.ini upgrade head &&
       celery -A app.workers.celery_app worker --loglevel=info --concurrency=4"
-
-  web:
-    build:
-      context: ./web
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
-        NEXT_PUBLIC_APP_ENV: production
-    restart: always
-    ports:
-      - "3000:3000"
-    environment:
-      NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
-      NEXT_PUBLIC_APP_ENV: production
-    depends_on:
-      - backend
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000 || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
 
 volumes:
   postgres_prod_data:
