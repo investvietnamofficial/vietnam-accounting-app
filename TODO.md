@@ -2,12 +2,12 @@
 
 ## High Priority
 
-- [ ] Wire real SMTP email delivery for password reset (tokens are generated but no email is sent).
+- [x] Wire real SMTP email delivery for password reset (tokens are generated but no email is sent). → `backend/app/services/email/`
 - [ ] Add invoice list filters in backend and web: date range, VAT rate, seller/buyer, and GDT verification status.
 - [ ] Persist tax-report adjustment inputs as a filing-draft model instead of passing them as transient query parameters.
 - [ ] Expose the existing backend failed-document retry route in the web UI.
 - [ ] Implement PDF VAT export (`reports.py` currently returns HTTP 501).
-- [ ] Define a production deployment target and replace dev-only startup commands (`uvicorn --reload`, `npm run dev`).
+- [x] Define a production deployment target and replace dev-only startup commands (`uvicorn --reload`, `npm run dev`). → `docker-compose.prod.yml`, `backend/Dockerfile`, `web/Dockerfile`
 
 ## Medium Priority
 
@@ -16,15 +16,15 @@
 - [ ] Expand role enforcement beyond baseline authenticated access on non-auth routes.
 - [ ] Add document security scanning and clearer file-validation telemetry.
 - [ ] Add invoice detail view with GDT verification notes instead of the current table-only workflow.
-- [ ] Replace broad `dict` payload handling in `companies.py` with typed Pydantic schemas.
+- [x] Replace broad `dict` payload handling in `companies.py` with typed Pydantic schemas. → `CompanySettingsUpdate` with `extra="forbid"`
 - [ ] Build all web pages on typed API responses instead of `any`-heavy rendering paths.
 
 ## Technical Debt
 
-- [ ] Remove or explicitly quarantine `seed_demo_data()` and any remaining demo-mode assumptions.
+- [x] Remove or explicitly quarantine `seed_demo_data()` and any remaining demo-mode assumptions. → removed from `backend/app/main.py`
 - [ ] Resolve legacy/stale docs drift between `README.md`, `docs/CODEX_HANDOFF.md`, and the new root docs.
 - [ ] Normalize timezone handling where `datetime.utcnow()` is still used directly.
-- [ ] Review local-storage fallback assumptions in `r2_service.py` for clearer dev/prod separation.
+- [x] Review local-storage fallback assumptions in `r2_service.py` for clearer dev/prod separation. → signed URL support, security comments
 - [ ] Complete mobile router and scanner-only status or formally mark the mobile client as experimental.
 
 ---

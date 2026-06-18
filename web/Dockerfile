@@ -10,6 +10,7 @@ ENV NEXT_PUBLIC_APP_ENV=$NEXT_PUBLIC_APP_ENV
 ENV NODE_ENV=production
 
 COPY package.json ./
+COPY package-lock.json ./
 RUN npm ci
 
 COPY . .
