@@ -56,11 +56,11 @@ services:
     depends_on:
       - backend
     labels:
+      - "coolify.override.fqdn=vn-accounting.178.105.157.205.sslip.io"
       - "traefik.enable=true"
       - "traefik.http.routers.vnAccounting.rule=Host(`vn-accounting.178.105.157.205.sslip.io`)"
-      - "traefik.http.routers.vnAccounting.entrypoints=websecure"
+      - "traefik.http.routers.vnAccounting.entrypoints=web,websecure"
       - "traefik.http.services.vnAccounting.loadbalancer.server.port=3000"
-      - "traefik.http.routers.vnAccounting.tls.certresolver=letsencrypt"
 
 volumes:
   postgres_prod_data:
