@@ -17,7 +17,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       args:
-        BUILD_DATE: "2026-18"
+        BUILD_DATE: "2026-0618b"
     restart: always
     environment:
       APP_ENV: ${APP_ENV:-production}
