@@ -17,8 +17,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -34,13 +32,14 @@ services:
     environment:
       APP_ENV: development
       APP_DEBUG: "true"
-      ALLOWED_ORIGINS: '["http://localhost:3000","http://localhost:8000"]'
+      ALLOWED_ORIGINS: '["http://localhost:3001","http://localhost:8000"]'
       DATABASE_URL: postgresql+asyncpg://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
       DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret}
       LOCAL_STORAGE_DIR: /app/storage
       USE_CELERY: "false"
+      PYTHONPATH: /app
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,6 +61,7 @@ services:
       DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret}
+      PYTHONPATH: /app
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,7 +78,7 @@ services:
       context: ./web
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
     volumes:
