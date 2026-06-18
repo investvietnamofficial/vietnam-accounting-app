@@ -27,8 +27,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    profiles:
-      - db
 
   redis:
     image: redis:7-alpine
@@ -38,8 +36,6 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-    profiles:
-      - db
 
   backend:
     build:
