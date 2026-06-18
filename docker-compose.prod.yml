@@ -17,7 +17,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       args:
-        BUILD_DATE: "2026-0618b"
+        BUILD_DATE: "2026-0618c"
+    labels:
+      coolify.managed: "true"
     restart: always
     environment:
       APP_ENV: ${APP_ENV:-production}
