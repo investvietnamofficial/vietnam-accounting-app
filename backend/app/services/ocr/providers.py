@@ -3,12 +3,21 @@ Shared OCR types and provider factory.
 
 Provides:
 - OCRResult: standard result object returned by all OCR providers
+- OCRPage: per-page OCR text with confidence
 - OCRProviderError: raised on provider failure
 - get_ocr_provider(): factory that returns the configured provider instance
 """
 
 from dataclasses import dataclass, field
 from app.core.config import get_settings
+
+
+@dataclass
+class OCRPage:
+    """OCR result for a single page within a document."""
+    page_number: int
+    text: str
+    confidence: float = 0.0
 
 
 @dataclass
@@ -21,6 +30,8 @@ class OCRResult:
     blocks: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     duration_ms: float = 0.0
+    # Per-page breakdown for queryable access
+    pages: list[OCRPage] = field(default_factory=list)
 
 
 class OCRProviderError(Exception):

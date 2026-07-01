@@ -49,6 +49,7 @@ class GoogleVisionOCR:
 
     settings: object
     _client: object = field(default=None, init=False, repr=False)
+    ENGINE_VERSION: str = "google-cloud-vision"  # set to actual version at runtime if available
 
     # Maximum image dimension (width or height) to stay within Vision API limits
     MAX_IMAGE_DIM: int = 4096
@@ -204,6 +205,7 @@ class GoogleVisionOCR:
         page_texts: list[str] = []
         confidences: list[float] = []
         warnings: list[str] = []
+        ocr_pages: list = []
 
         import asyncio
 
@@ -226,11 +228,18 @@ class GoogleVisionOCR:
                 page_texts.append(f"[--- Page {page_num} ---]\n{page_result.text}")
                 confidences.append(page_result.confidence)
                 all_blocks.extend(page_result.blocks)
+                ocr_pages.append({
+                    "page_number": page_num,
+                    "text": page_result.text,
+                    "confidence": page_result.confidence,
+                })
 
             except asyncio.TimeoutError:
                 warnings.append(f"Page {page_num} timed out after {per_page_timeout:.0f}s")
+                ocr_pages.append({"page_number": page_num, "text": "", "confidence": 0.0})
             except Exception as exc:
                 warnings.append(f"Page {page_num} failed: {exc}")
+                ocr_pages.append({"page_number": page_num, "text": "", "confidence": 0.0})
 
         merged_text = "\n\n".join(page_texts)
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
@@ -244,6 +253,7 @@ class GoogleVisionOCR:
             blocks=all_blocks,
             warnings=warnings,
             duration_ms=duration_ms,
+            pages=[_make_ocr_page(p) for p in ocr_pages],
         )
 
     def _prepare_image(self, image_bytes: bytes, mime_type: str) -> bytes:
@@ -340,6 +350,7 @@ class GoogleVisionOCR:
             page_count=1,
             blocks=page_result.blocks,
             duration_ms=duration_ms,
+            pages=[_make_ocr_page({"page_number": 1, "text": page_result.text, "confidence": page_result.confidence})],
         )
 
     def _parse_single_response(self, response) -> OCRResult:
@@ -453,6 +464,17 @@ def _pb_to_dict(pb) -> dict:
         }
     except Exception:
         return {}
+
+
+def _make_ocr_page(page_dict: dict):
+    """Convert a page dict to an OCRPage dataclass."""
+    from app.services.ocr.providers import OCRPage
+
+    return OCRPage(
+        page_number=page_dict.get("page_number", 1),
+        text=page_dict.get("text", ""),
+        confidence=float(page_dict.get("confidence", 0.0)),
+    )
 
 
 class _ProjectAwareClient:

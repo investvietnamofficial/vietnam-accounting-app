@@ -68,16 +68,34 @@ async def _process_document_async(task, document_id: str):
                 document_id=document_id,
                 attempts=doc.processing_attempts,
                 mime_type=doc.mime_type,
+                file_size_bytes=len(doc.file_url.encode()) if doc.file_url else 0,
             )
 
             r2 = R2Service()
             raw_bytes = await r2.download(doc.file_url)
-            image_bytes = _prepare_document_for_ocr(raw_bytes, doc.mime_type)
 
             ocr_provider = get_ocr_provider()
-            ocr_result = await ocr_provider.extract_text(image_bytes, doc.mime_type)
+            # Use PDF method for PDFs if available, otherwise fall back to image method
+            if doc.mime_type == "application/pdf" and hasattr(ocr_provider, "extract_text_from_pdf"):
+                ocr_result = await ocr_provider.extract_text_from_pdf(raw_bytes)
+            else:
+                image_bytes = _prepare_document_for_ocr(raw_bytes, doc.mime_type)
+                ocr_result = await ocr_provider.extract_text(image_bytes, doc.mime_type)
+
+            # Persist all OCR metadata
             doc.ocr_raw_text = ocr_result.text
             doc.ocr_confidence = ocr_result.confidence
+            doc.ocr_provider = ocr_result.provider
+            doc.ocr_duration_ms = int(ocr_result.duration_ms)
+            doc.ocr_page_count = ocr_result.page_count
+            doc.ocr_language = "vi+en"  # current language hints used by all providers
+            doc.ocr_engine_version = getattr(ocr_provider, "ENGINE_VERSION", ocr_result.provider)
+            doc.ocr_warnings = ocr_result.warnings or None
+            # Serialise pages: OCRPage -> plain dict for JSONB
+            doc.ocr_pages = [
+                {"page_number": p.page_number, "text": p.text, "confidence": p.confidence}
+                for p in ocr_result.pages
+            ] if ocr_result.pages else None
 
             extractor = ExtractionService()
             extracted = await extractor.extract_invoice_fields(
@@ -123,6 +141,11 @@ async def _process_document_async(task, document_id: str):
                 document_id=document_id,
                 invoice_id=invoice.id,
                 attempts=doc.processing_attempts,
+                ocr_provider=doc.ocr_provider,
+                ocr_duration_ms=doc.ocr_duration_ms,
+                ocr_page_count=doc.ocr_page_count,
+                ocr_confidence=doc.ocr_confidence,
+                extraction_confidence=doc.extraction_confidence,
             )
             return {"status": "success", "document_id": document_id, "invoice_id": invoice.id}
 
@@ -137,6 +160,7 @@ async def _process_document_async(task, document_id: str):
                 document_id=document_id,
                 attempts=doc.processing_attempts,
                 retry_scheduled=retry_scheduled,
+                ocr_provider=getattr(doc, "ocr_provider", None),
                 error=str(exc),
             )
             if retry_scheduled and task is not None:

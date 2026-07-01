@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Re-export OCRResult so existing imports from this module still work
-from app.services.ocr.providers import OCRResult, OCRProviderError
+# Re-export shared types so existing imports from this module still work
+from app.services.ocr.providers import OCRResult, OCRProviderError, OCRPage
 
 # Lazy import for PaddleOCR (heavy dependency)
 _paddleocr = None
@@ -73,29 +73,39 @@ class MockOCRProvider:
     Always returns the same well-formed mock invoice regardless of input.
     """
 
+    ENGINE_VERSION = "1.0.0-mock"
+
     def __init__(self, settings: "Settings"):
         self.settings = settings
 
     async def extract_text(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> OCRResult:
         """Return a deterministic mock invoice regardless of input."""
+        text = _MOCK_INVOICE_TEXT.strip()
+        page = OCRPage(page_number=1, text=text, confidence=0.82)
         return OCRResult(
-            text=_MOCK_INVOICE_TEXT.strip(),
+            text=text,
             confidence=0.82,
             provider="mock",
             page_count=1,
             blocks=[],
+            warnings=[],
             duration_ms=0.0,
+            pages=[page],
         )
 
     async def extract_text_from_pdf(self, pdf_bytes: bytes) -> OCRResult:
         """Return a single-page mock result for PDFs."""
+        text = _MOCK_INVOICE_TEXT.strip()
+        page = OCRPage(page_number=1, text=text, confidence=0.82)
         return OCRResult(
-            text=_MOCK_INVOICE_TEXT.strip(),
+            text=text,
             confidence=0.82,
             provider="mock",
             page_count=1,
             blocks=[],
+            warnings=[],
             duration_ms=0.0,
+            pages=[page],
         )
 
 
@@ -121,6 +131,8 @@ class PaddleOCRProvider:
     (>90s per page). Use OCR_ENGINE=paddle only as an offline fallback, not
     for production traffic.
     """
+
+    ENGINE_VERSION = "paddlepaddle"
 
     def __init__(self, settings: "Settings"):
         self.settings = settings
@@ -167,6 +179,9 @@ class PaddleOCRProvider:
             )
 
         result.duration_ms = (time.monotonic() - start) * 1000
+        # Add page entry for single-page case
+        if not result.pages:
+            result.pages.append(OCRPage(page_number=1, text=result.text, confidence=result.confidence))
         return result
 
     async def extract_text_from_pdf(self, pdf_bytes: bytes) -> OCRResult:
@@ -183,15 +198,16 @@ class PaddleOCRProvider:
             )
 
         try:
-            pages = convert_from_bytes(pdf_bytes, dpi=200, fmt="jpeg", thread_count=2)
+            pdf_pages = convert_from_bytes(pdf_bytes, dpi=200, fmt="jpeg", thread_count=2)
         except Exception as exc:
             raise OCRProviderError(f"pdf2image failed: {exc}", provider="paddle") from exc
 
         all_texts: list[str] = []
         all_confidences: list[float] = []
         total_blocks: list[dict] = []
+        ocr_pages: list[OCRPage] = []
 
-        for i, page_img in enumerate(pages, start=1):
+        for i, page_img in enumerate(pdf_pages, start=1):
             buf = io.BytesIO()
             if page_img.mode not in ("RGB",):
                 page_img = page_img.convert("RGB")
@@ -202,14 +218,16 @@ class PaddleOCRProvider:
             all_texts.append(f"[--- Page {i} ---]\n{page_result.text}")
             all_confidences.append(page_result.confidence)
             total_blocks.extend(page_result.blocks)
+            ocr_pages.append(OCRPage(page_number=i, text=page_result.text, confidence=page_result.confidence))
 
         return OCRResult(
             text="\n\n".join(all_texts),
             confidence=sum(all_confidences) / len(all_confidences) if all_confidences else 0.0,
             provider="paddle",
-            page_count=len(pages),
+            page_count=len(pdf_pages),
             blocks=total_blocks,
             duration_ms=(time.monotonic() - start) * 1000,
+            pages=ocr_pages,
         )
 
     # ------------------------------------------------------------------

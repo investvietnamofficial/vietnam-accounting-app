@@ -99,7 +99,10 @@ class User(TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.ACCOUNTANT)
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, values_callable=lambda x: [e.value for e in x]),
+        default=UserRole.ACCOUNTANT
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     company_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("companies.id"), nullable=True)
 
@@ -122,7 +125,8 @@ class Company(TimestampMixin, Base):
     accounting_standard: Mapped[str] = mapped_column(String(10), default="VAS")
     # monthly or quarterly VAT filing
     vat_declaration_period: Mapped[TaxDeclarationPeriod] = mapped_column(
-        Enum(TaxDeclarationPeriod), default=TaxDeclarationPeriod.QUARTERLY
+        Enum(TaxDeclarationPeriod, values_callable=lambda x: [e.value for e in x]),
+        default=TaxDeclarationPeriod.QUARTERLY
     )
     fiscal_year_start_month: Mapped[int] = mapped_column(Integer, default=1)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -148,13 +152,27 @@ class Document(TimestampMixin, Base):
     file_checksum: Mapped[str | None] = mapped_column(String(64), index=True)
 
     # Classification
-    doc_type: Mapped[DocumentType] = mapped_column(Enum(DocumentType), default=DocumentType.OTHER)
-    status: Mapped[DocumentStatus] = mapped_column(Enum(DocumentStatus), default=DocumentStatus.PENDING)
+    doc_type: Mapped[DocumentType] = mapped_column(
+        Enum(DocumentType, values_callable=lambda x: [e.value for e in x]),
+        default=DocumentType.OTHER
+    )
+    status: Mapped[DocumentStatus] = mapped_column(
+        Enum(DocumentStatus, values_callable=lambda x: [e.value for e in x]),
+        default=DocumentStatus.PENDING
+    )
     duplicate_of_document_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("documents.id"), nullable=True)
 
-    # OCR results (raw)
+    # OCR results (raw) — backwards-compatible merged text
     ocr_raw_text: Mapped[str | None] = mapped_column(Text)
     ocr_confidence: Mapped[float | None] = mapped_column(Numeric(5, 4))
+    # Extended OCR metadata (queryable)
+    ocr_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)          # "google" | "paddle" | "mock"
+    ocr_engine_version: Mapped[str | None] = mapped_column(String(50), nullable=True)    # engine version string
+    ocr_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)         # total OCR wall-clock ms
+    ocr_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)           # pages processed
+    ocr_language: Mapped[str | None] = mapped_column(String(20), nullable=True)          # language hints used
+    ocr_warnings: Mapped[list | None] = mapped_column(JSONB, nullable=True)               # non-fatal warnings
+    ocr_pages: Mapped[list | None] = mapped_column(JSONB, nullable=True)                 # per-page breakdown
 
     # Extracted structured data (from Claude)
     extracted_data: Mapped[dict | None] = mapped_column(JSONB)
@@ -187,7 +205,10 @@ class Invoice(TimestampMixin, Base):
     invoice_series: Mapped[str | None] = mapped_column(String(20))   # Ký hiệu (e.g. "AA/23E")
     invoice_number: Mapped[str | None] = mapped_column(String(50))   # Số hóa đơn
     invoice_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    invoice_type: Mapped[DocumentType] = mapped_column(Enum(DocumentType), default=DocumentType.INVOICE_VAT)
+    invoice_type: Mapped[DocumentType] = mapped_column(
+        Enum(DocumentType, values_callable=lambda x: [e.value for e in x]),
+        default=DocumentType.INVOICE_VAT
+    )
 
     # Seller info
     seller_name: Mapped[str | None] = mapped_column(String(500))
@@ -202,7 +223,10 @@ class Invoice(TimestampMixin, Base):
 
     # Amounts (in VND, no decimal)
     subtotal_amount: Mapped[int] = mapped_column(BigInteger, default=0)    # Cộng tiền hàng
-    vat_rate: Mapped[VATRate] = mapped_column(Enum(VATRate), default=VATRate.TEN)
+    vat_rate: Mapped[VATRate] = mapped_column(
+        Enum(VATRate, values_callable=lambda x: [e.value for e in x]),
+        default=VATRate.TEN
+    )
     vat_amount: Mapped[int] = mapped_column(BigInteger, default=0)         # Tiền thuế GTGT
     total_amount: Mapped[int] = mapped_column(BigInteger, default=0)       # Tổng tiền thanh toán
 
@@ -261,7 +285,10 @@ class JournalEntry(TimestampMixin, Base):
     entry_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     reference: Mapped[str | None] = mapped_column(String(100))
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[JournalEntryStatus] = mapped_column(Enum(JournalEntryStatus), default=JournalEntryStatus.DRAFT)
+    status: Mapped[JournalEntryStatus] = mapped_column(
+        Enum(JournalEntryStatus, values_callable=lambda x: [e.value for e in x]),
+        default=JournalEntryStatus.DRAFT
+    )
     total_amount: Mapped[int] = mapped_column(BigInteger, default=0)
 
     company: Mapped["Company"] = relationship("Company", back_populates="journal_entries")
