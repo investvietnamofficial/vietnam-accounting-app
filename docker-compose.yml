@@ -34,7 +34,7 @@ services:
       APP_DEBUG: "true"
       ALLOWED_ORIGINS: '["http://localhost:3001","http://localhost:8000"]'
       DATABASE_URL: postgresql+asyncpg://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
-      DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
+      DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret}
       LOCAL_STORAGE_DIR: /app/storage
@@ -58,7 +58,7 @@ services:
     environment:
       APP_ENV: development
       DATABASE_URL: postgresql+asyncpg://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
-      DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
+      DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret}
       PYTHONPATH: /app
@@ -76,11 +76,12 @@ services:
   web:
     build:
       context: ./web
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     ports:
       - "3001:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      NODE_ENV: development
     volumes:
       - ./web:/app
       - /app/node_modules

@@ -7,14 +7,13 @@ ARG NEXT_PUBLIC_APP_ENV=production
 
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_APP_ENV=$NEXT_PUBLIC_APP_ENV
-ENV NODE_ENV=production
 
 COPY package.json ./
 COPY package-lock.json ./
-RUN npm ci
+RUN npm install --legacy-peer-deps --ignore-scripts
 
 COPY . .
-RUN npm run build
+RUN NODE_ENV=production npm run build
 
 FROM node:20-alpine AS runner
 

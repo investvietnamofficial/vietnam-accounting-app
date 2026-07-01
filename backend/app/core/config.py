@@ -63,9 +63,12 @@ class Settings(BaseSettings):
     google_cloud_credentials_json: str = ""  # paste full service-account JSON as string
     ocr_timeout_seconds: int = 60  # per-page timeout for OCR operations
 
-    # Anthropic
+    # LLM provider: deepseek (production) | anthropic (fallback)
+    llm_provider: str = "deepseek"  # deepseek | anthropic
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-haiku-4-5-20251001"
+    anthropic_model: str = "claude-sonnet-4-20250514"
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-chat"
 
     # Cloudflare R2
     r2_account_id: str = ""

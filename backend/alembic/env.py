@@ -1,5 +1,6 @@
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool, String
+from sqlalchemy import engine_from_config, pool
+from sqlalchemy.dialects.postgresql import VARCHAR
 from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
@@ -26,7 +27,7 @@ def run_migrations_online():
                                      prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata,
-                         version_table_coltype=String(64))
+                         version_table_coltype=VARCHAR(64))
         with context.begin_transaction():
             context.run_migrations()
 

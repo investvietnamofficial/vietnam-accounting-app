@@ -61,7 +61,7 @@ async def upload_document(
     existing = await _find_existing_document(db, current_user.company_id, checksum)
     if existing:
         logger.info("duplicate_document_upload", extra={"document_id": existing.id, "company_id": current_user.company_id})
-        if existing.status == DocumentStatus.FAILED:
+        if existing.status in {DocumentStatus.FAILED, DocumentStatus.PENDING}:
             existing.status = DocumentStatus.PENDING
             existing.processing_error = None
             existing.processed_at = None
@@ -72,7 +72,7 @@ async def upload_document(
                 "job_id": job_id,
                 "status": existing.status.value,
                 "duplicate": True,
-                "message": "Existing failed document found. Processing has been retried.",
+                "message": "Existing document re-queued for processing.",
             }
         return {
             "document_id": existing.id,

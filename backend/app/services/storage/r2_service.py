@@ -29,7 +29,14 @@ class R2Service:
             settings.r2_access_key_id,
             settings.r2_secret_access_key,
             settings.r2_public_url,
-        ])
+        ]) or any(
+            str(v).startswith("your-") for v in [
+                settings.r2_account_id,
+                settings.r2_access_key_id,
+                settings.r2_secret_access_key,
+                settings.r2_public_url,
+            ]
+        )
         self.local_root = Path(settings.local_storage_dir).resolve()
         self.client = None
         if not self.use_local:

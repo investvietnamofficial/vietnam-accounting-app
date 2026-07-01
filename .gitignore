@@ -13,3 +13,4 @@ web/.env.local
 mobile/.dart_tool/
 mobile/build/
 mobile/pubspec.lock
+.DS_Store

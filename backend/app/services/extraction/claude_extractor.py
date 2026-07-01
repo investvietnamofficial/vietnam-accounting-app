@@ -1,21 +1,24 @@
 """
-Extraction Service — uses Claude to extract structured fields from raw OCR text.
+Extraction Service — uses an LLM to extract structured fields from raw OCR text.
 
-This is the core intelligence layer. Claude reliably handles:
-- Messy OCR output with Vietnamese diacritics
-- Multiple invoice formats (printed, handwritten, digital)
-- Ambiguous field placement across different templates
+Supports two providers (selected via LLM_PROVIDER):
+  deepseek   — production: fast, cheap, reliable (API: api.deepseek.com)
+  anthropic  — fallback: Claude models
+
+Both use the same EXTRACTION_SYSTEM_PROMPT.
 """
 
 import json
 import logging
 import re
+import time
 import unicodedata
+import urllib.request
 from typing import Any
 
 try:
     import anthropic
-except ImportError:  # local MVP mode can run without Anthropic SDK installed
+except ImportError:  # local MVP mode can run without the Anthropic SDK installed
     anthropic = None
 
 from app.core.config import get_settings
@@ -94,19 +97,88 @@ LOW_CONFIDENCE_THRESHOLD = 0.78
 
 class ExtractionService:
     """
-    Uses Claude to extract structured fields from raw OCR text.
+    Uses an LLM to extract structured fields from raw OCR text.
 
-    Advantages over regex/rule-based extraction:
-    - Handles varied invoice templates without hardcoding
-    - Robust to OCR errors and unusual formatting
-    - Understands Vietnamese accounting context
+    Provider is selected via settings.llm_provider:
+      deepseek  — production (api.deepseek.com, fast + cheap)
+      anthropic — fallback (Anthropic API, Claude models)
+      None      — regex-only (no LLM, offline/dev mode)
+
+    Falls back to regex extraction if no LLM is configured.
     """
 
     def __init__(self):
-        self.client = None
-        if anthropic and settings.anthropic_api_key and not settings.anthropic_api_key.startswith("your-"):
-            self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        self.model = settings.anthropic_model
+        self.provider = settings.llm_provider.lower()
+        self.deepseek_client = None
+        self.anthropic_client = None
+
+        # Initialise Anthropic if configured and not a placeholder
+        if (
+            anthropic
+            and settings.anthropic_api_key
+            and not settings.anthropic_api_key.startswith("your-")
+        ):
+            self.anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+        # Initialise DeepSeek if configured and not a placeholder
+        if settings.deepseek_api_key and not settings.deepseek_api_key.startswith("your-"):
+            self.deepseek_client = settings.deepseek_api_key
+
+        self.deepseek_model = settings.deepseek_model
+        self.anthropic_model = settings.anthropic_model
+
+    async def _call_deepseek(self, user_message: str) -> str:
+        """Call DeepSeek chat completion API directly via urllib."""
+        payload = {
+            "model": self.deepseek_model,
+            "messages": [
+                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            "max_tokens": 2000,
+            "temperature": 0.1,
+        }
+
+        req = urllib.request.Request(
+            "https://api.deepseek.com/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Authorization": f"Bearer {self.deepseek_client}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+
+        return result["choices"][0]["message"]["content"]
+
+    async def _call_anthropic(self, user_message: str) -> str:
+        """Call Anthropic Claude API."""
+        response = await self.anthropic_client.messages.create(
+            model=self.anthropic_model,
+            max_tokens=2000,
+            system=EXTRACTION_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_message}],
+        )
+        return response.content[0].text.strip()
+
+    async def _call_llm(self, user_message: str) -> str:
+        """Route to the configured LLM provider, with graceful fallback."""
+        if self.provider == "deepseek" and self.deepseek_client:
+            try:
+                return await self._call_deepseek(user_message)
+            except Exception as exc:
+                logger.warning("DeepSeek call failed: %s — falling back to regex", exc)
+
+        if self.provider == "anthropic" and self.anthropic_client:
+            try:
+                return await self._call_anthropic(user_message)
+            except Exception as exc:
+                logger.warning("Anthropic call failed: %s — falling back to regex", exc)
+
+        return None  # signal: use regex only
 
     async def extract_invoice_fields(
         self,
@@ -121,9 +193,8 @@ class ExtractionService:
             Dict with extracted fields and confidence score
         """
         regex_result = self._regex_extract(ocr_text)
-        if self.client is None:
-            return regex_result
 
+        # Build user message
         context = []
         if ocr_confidence is not None:
             context.append(f"OCR confidence: {ocr_confidence:.2f}")
@@ -136,24 +207,28 @@ class ExtractionService:
         user_message += f"\n\n{ocr_text}"
 
         try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=2000,
-                system=EXTRACTION_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_message}],
-            )
+            raw = await self._call_llm(user_message)
+        except Exception as exc:
+            logger.error("LLM call failed: %s", exc)
+            raw = None
 
-            raw = response.content[0].text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
+        if raw is None:
+            return regex_result
 
-            extracted = self._validate_and_clean(json.loads(raw))
+        # Strip markdown code fences
+        text = raw.strip()
+        if text.startswith("```"):
+            parts = text.split("```", 2)
+            if len(parts) >= 2:
+                text = parts[1].lstrip()
+                if text.startswith("json"):
+                    text = text[4:].lstrip()
+
+        try:
+            extracted = self._validate_and_clean(json.loads(text))
             return self._merge_with_regex_fallback(extracted, regex_result, ocr_confidence)
-
         except json.JSONDecodeError as exc:
-            logger.error("Claude returned invalid JSON: %s", exc)
+            logger.error("LLM returned invalid JSON: %s — raw: %s", exc, raw[:200])
             return regex_result
         except Exception as exc:
             logger.error("Extraction failed: %s", exc)

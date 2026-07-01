@@ -225,7 +225,7 @@ class GoogleVisionOCR:
                 )
 
                 page_result = self._parse_single_response(response)
-                page_texts.append(f"[--- Page {page_num} ---]\n{page_result.text}")
+                page_texts.append(f"[--- Page {page_num} ---\n{page_result.text}")
                 confidences.append(page_result.confidence)
                 all_blocks.extend(page_result.blocks)
                 ocr_pages.append({
@@ -377,8 +377,9 @@ class GoogleVisionOCR:
                 block_words: list[dict] = []
                 for para in getattr(block, "paragraphs", []) or []:
                     for word in getattr(para, "words", []) or []:
+                        # Symbol.text is the correct attribute (not s.symbol.text)
                         word_text = "".join(
-                            s.symbol.text for s in getattr(word, "symbols", []) or []
+                            s.text for s in getattr(word, "symbols", []) or []
                         )
                         word_conf = getattr(word, "confidence", None) or 0.0
                         if word_text:
