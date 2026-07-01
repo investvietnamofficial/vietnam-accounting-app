@@ -3,6 +3,8 @@
 ## High Priority
 
 - [x] Wire real SMTP email delivery for password reset (tokens are generated but no email is sent). → `backend/app/services/email/`
+- [x] Implement Google Cloud Vision as production OCR provider with clean provider architecture (google/paddle/mock). → `backend/app/services/ocr/providers.py`, `google_vision.py`, `vision_service.py`
+- [x] Persist full OCR metadata (provider, duration_ms, page_count, language, engine_version, warnings, per-page breakdown). → Migration `007_add_ocr_metadata`, `tasks.py`, `documents.py`
 - [ ] Add invoice list filters in backend and web: date range, VAT rate, seller/buyer, and GDT verification status.
 - [ ] Persist tax-report adjustment inputs as a filing-draft model instead of passing them as transient query parameters.
 - [ ] Expose the existing backend failed-document retry route in the web UI.
@@ -23,6 +25,7 @@
 
 - [x] Remove or explicitly quarantine `seed_demo_data()` and any remaining demo-mode assumptions. → removed from `backend/app/main.py`
 - [ ] Resolve legacy/stale docs drift between `README.md`, `docs/CODEX_HANDOFF.md`, and the new root docs.
+- [ ] Run Google Cloud Vision real-credentials smoke test (1 PDF invoice, 1 scanned image, 1 photographed image) to measure actual OCR quality and timing. See `docs/GOOGLE_VISION_SETUP.md` for credentials setup.
 - [ ] Normalize timezone handling where `datetime.utcnow()` is still used directly.
 - [x] Review local-storage fallback assumptions in `r2_service.py` for clearer dev/prod separation. → signed URL support, security comments
 - [ ] Complete mobile router and scanner-only status or formally mark the mobile client as experimental.
