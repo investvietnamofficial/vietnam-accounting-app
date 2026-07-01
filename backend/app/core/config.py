@@ -11,8 +11,10 @@ class Settings(BaseSettings):
     app_debug: bool = True
     allowed_origins: list[str] = [
         "http://localhost:3000",
+        "http://localhost:3001",
         "http://localhost:3002",
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
         "http://127.0.0.1:3002",
     ]
 
@@ -49,13 +51,17 @@ class Settings(BaseSettings):
             if not self.app_secret_key or self.app_secret_key in ("", "changeme"):
                 raise ValueError("APP_SECRET_KEY must be set to a secure random value in production")
 
-    # Google Vision
-    ocr_engine: str = "paddle"  # paddle | google | mock
+    # OCR Engine: google (production), paddle (offline fallback), mock (dev/tests)
+    ocr_engine: str = "google"  # google | paddle | mock
     paddleocr_lang: str = "vi"
     paddleocr_use_gpu: bool = False
     paddleocr_timeout_seconds: int = 45
-    google_vision_api_key: str = ""
-    google_application_credentials: str = ""
+    google_application_credentials: str = ""  # path to service-account JSON file
+
+    # Google Cloud Vision (production default)
+    google_cloud_project: str = ""  # GCP project ID for billing
+    google_cloud_credentials_json: str = ""  # paste full service-account JSON as string
+    ocr_timeout_seconds: int = 60  # per-page timeout for OCR operations
 
     # Anthropic
     anthropic_api_key: str = ""

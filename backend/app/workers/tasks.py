@@ -46,7 +46,7 @@ async def _process_document_async(task, document_id: str):
     from app.models import Document, DocumentStatus, Invoice
     from app.services.einvoice import GDTInvoiceVerificationService
     from app.services.extraction.claude_extractor import ExtractionService
-    from app.services.ocr.vision_service import OCRService
+    from app.services.ocr.providers import get_ocr_provider
     from app.services.storage.r2_service import R2Service
 
     async with AsyncSessionLocal() as db:
@@ -74,8 +74,8 @@ async def _process_document_async(task, document_id: str):
             raw_bytes = await r2.download(doc.file_url)
             image_bytes = _prepare_document_for_ocr(raw_bytes, doc.mime_type)
 
-            ocr_service = OCRService()
-            ocr_result = await ocr_service.extract_text(image_bytes, doc.mime_type)
+            ocr_provider = get_ocr_provider()
+            ocr_result = await ocr_provider.extract_text(image_bytes, doc.mime_type)
             doc.ocr_raw_text = ocr_result.text
             doc.ocr_confidence = ocr_result.confidence
 
@@ -166,6 +166,8 @@ def _parse_vat_rate(value):
 
 async def _verify_invoice_with_gdt(db, invoice):
     """Verify invoice via GDT API without failing the entire document pipeline."""
+    from app.services.einvoice import GDTInvoiceVerificationService
+
     if not (invoice.invoice_series and invoice.invoice_number):
         invoice.notes = (invoice.notes or "") + "\nGDT verify skipped: missing invoice series/number."
         await db.commit()
