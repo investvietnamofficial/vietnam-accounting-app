@@ -53,6 +53,7 @@ reportlab==4.1.0
 python-slugify==8.0.4
 pendulum==3.0.0
 structlog==24.1.0
+prometheus-client==0.20.0
 
 # Error tracking
 sentry-sdk==2.3.1

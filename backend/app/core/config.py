@@ -48,8 +48,17 @@ class Settings(BaseSettings):
         if self.app_env == "production":
             if not self.jwt_secret_key:
                 raise ValueError("JWT_SECRET_KEY must be set in production")
+            if self.jwt_secret_key in ("changeme", "change-me-jwt-secret", "dev-jwt-secret"):
+                raise ValueError("JWT_SECRET_KEY must not be a placeholder value in production")
             if not self.app_secret_key or self.app_secret_key in ("", "changeme"):
                 raise ValueError("APP_SECRET_KEY must be set to a secure random value in production")
+
+        # Reject wildcard origins when CORS credentials are in use (security risk)
+        if "*" in self.allowed_origins:
+            raise ValueError(
+                "ALLOWED_ORIGINS cannot contain '*' — wildcard origins are not allowed "
+                "when CORS allow_credentials is enabled. Use explicit origins."
+            )
 
     # OCR Engine: google (production), paddle (offline fallback), mock (dev/tests)
     ocr_engine: str = "google"  # google | paddle | mock

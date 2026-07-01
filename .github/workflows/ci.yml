@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main, fix/**]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ── Backend ────────────────────────────────────────────────────────────────
+  backend:
+    name: Backend (Python ${{ env.PYTHON_VERSION }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: vn_accounting_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Alembic migrations
+        run: |
+          export DATABASE_URL="postgresql+asyncpg://test_user:test_pass@localhost:5432/vn_accounting_test"
+          alembic -c alembic.ini upgrade head
+
+      - name: Backend unit tests
+        run: |
+          export PYTHONPATH=backend
+          pytest tests/test_tax_engine.py \
+                 tests/test_reports_logic.py \
+                 tests/test_auth_security.py \
+                 tests/test_document_pipeline.py \
+                 tests/test_einvoice_service.py \
+                 tests/test_extraction_accuracy.py \
+                 -q --tb=short
+
+      - name: Integration tests
+        run: |
+          export PYTHONPATH=backend
+          pytest tests/test_api_integration.py -q --tb=short
+
+      - name: Type check
+        run: python -m mypy app --ignore-missing-imports || true
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+  # ── Docker build ────────────────────────────────────────────────────────────
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t vn-accounting-backend:test ./backend
+
+      - name: Build worker image
+        run: docker build -t vn-accounting-worker:test ./backend
+
+      - name: Build web image
+        run: docker build -t vn-accounting-web:test ./web

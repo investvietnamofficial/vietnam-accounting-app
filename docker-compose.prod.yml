@@ -4,12 +4,24 @@ services:
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-vn_accounting}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-testpass123}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}  # Required — no fallback
       POSTGRES_DB: ${POSTGRES_DB:-vn_accounting}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vn_accounting}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
     restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
     image: vn-accounting-backend:latest
@@ -23,23 +35,62 @@ services:
     restart: always
     environment:
       APP_ENV: ${APP_ENV:-production}
-      APP_SECRET_KEY: ${APP_SECRET_KEY:-changeme}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-changeme}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://vn_accounting:testpass123@postgres:5432/vn_accounting}
-      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC:-postgresql://vn_accounting:testpass123@postgres:5432/vn_accounting}
+      APP_SECRET_KEY: ${APP_SECRET_KEY}  # Required in production
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}  # Required in production
+      DATABASE_URL: ${DATABASE_URL}  # Required — no fallback
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}  # Required — no fallback
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-'["http://localhost:3000","http://localhost:8000"]'}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}  # Required in production — set Coolify env var
+      LOCAL_STORAGE_DIR: /app/storage
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || wget -qO- http://localhost:8000/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 30s
+    # ⚠️ Gilbert: mount a persistent Coolify volume at /app/storage to survive redeploys.
+    # In Coolify UI → Backend service → Storages → Add:
+    #   Source: vn-accounting-storage  Dest: /app/storage
+    volumes:
+      - backend_storage:/app/storage
     command: >
       sh -c "alembic -c alembic.ini upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    image: vn-accounting-worker:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        BUILD_DATE: "2026-0618c"
+    labels:
+      coolify.managed: "true"
+    restart: always
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_SECRET_KEY: ${APP_SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      USE_CELERY: "true"
+      LOCAL_STORAGE_DIR: /app/storage
+      OCR_ENGINE: ${OCR_ENGINE:-google}
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - backend_storage:/app/storage
+    command: >
+      sh -c "alembic -c alembic.ini upgrade head && exec celery -A app.workers.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=100"
 
   web:
     image: vn-accounting-web:latest
@@ -47,7 +98,7 @@ services:
       context: ./web
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
         NEXT_PUBLIC_APP_ENV: production
         BUILD_DATE: "2026-18"
     restart: always
@@ -58,3 +109,9 @@ services:
       - "traefik.http.routers.vnAccounting.rule=Host(`vn-accounting.178.105.157.205.sslip.io`)"
       - "traefik.http.routers.vnAccounting.entrypoints=web,websecure"
       - "traefik.http.services.vnAccounting.loadbalancer.server.port=3000"
+
+volumes:
+  postgres_data:
+    name: vn-accounting-postgres-data
+  backend_storage:
+    name: vn-accounting-storage

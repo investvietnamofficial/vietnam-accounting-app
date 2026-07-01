@@ -1,11 +1,11 @@
 """
-Transactional email service using SMTP.
+Transaction email service using SMTP.
 
 In production (APP_ENV=production), sends real emails.
 In development, logs the email content to the console instead.
 """
-import logging
 import smtplib
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import lru_cache
@@ -16,10 +16,29 @@ from app.core.config import get_settings
 
 logger = structlog.get_logger()
 
+# Transient SMTP errors worth retrying
+RETRYABLE_ERRORS = (
+    smtplib.SMTPServerDisconnected,
+    smtplib.SMTPSenderRefused,
+    smtplib.SMTPDataError,
+    smtplib.SMTPNotSupportedError,
+    OSError,  # DNS failures, connection refused, etc.
+)
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = (2, 5, 10)  # backoff
+
 
 class EmailService:
     def __init__(self):
         self.settings = get_settings()
+
+    def _frontend_base_url(self) -> str:
+        """Derive the public base URL from allowed_origins, with a safe fallback."""
+        origins = self.settings.allowed_origins
+        origin = (origins[0] if origins else "http://localhost:3000").rstrip("/")
+        scheme = "https" if self.settings.is_production else origin.split("://")[0]
+        host = origin.split("://")[-1]
+        return f"{scheme}://{host}"
 
     def _build_reset_email(self, to_email: str, reset_token: str) -> MIMEMultipart:
         msg = MIMEMultipart("alternative")
@@ -27,7 +46,8 @@ class EmailService:
         msg["From"] = self.settings.smtp_from or self.settings.smtp_user
         msg["To"] = to_email
 
-        reset_url = f"{self.settings.app_env == 'production' and 'https' or 'http'}://{self.settings.allowed_origins[0].replace('http://', '').replace('https://', '')}/auth/reset-password?token={reset_token}"
+        base = self._frontend_base_url()
+        reset_url = f"{base}/auth/reset-password?token={reset_token}"
 
         plain = f"""You received this email because a password reset was requested for your VN Accounting account.
 
@@ -77,17 +97,42 @@ If you did not request a password reset, you can safely ignore this email.
             logger.warning("smtp_not_configured", action="password_reset", to=to_email)
             return False
 
-        try:
-            with smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port, timeout=15) as server:
-                if self.settings.smtp_use_tls:
-                    server.starttls()
-                server.login(self.settings.smtp_user, self.settings.smtp_password)
-                server.sendmail(msg["From"], [to_email], msg.as_string())
-            logger.info("email_sent", action="password_reset", to=to_email)
-            return True
-        except Exception as exc:
-            logger.error("email_send_failed", action="password_reset", to=to_email, error=str(exc))
-            return False
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                with smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port, timeout=15) as server:
+                    if self.settings.smtp_use_tls:
+                        server.starttls()
+                    server.login(self.settings.smtp_user, self.settings.smtp_password)
+                    server.sendmail(msg["From"], [to_email], msg.as_string())
+                logger.info("email_sent", action="password_reset", to=to_email, attempt=attempt + 1)
+                return True
+            except RETRYABLE_ERRORS as exc:
+                last_error = exc
+                if attempt < MAX_RETRIES - 1:
+                    wait = RETRY_DELAY_SECONDS[attempt]
+                    logger.warning(
+                        "email_retry",
+                        action="password_reset",
+                        to=to_email,
+                        attempt=attempt + 1,
+                        wait_seconds=wait,
+                        error=str(exc),
+                    )
+                    time.sleep(wait)
+            except Exception as exc:
+                # Non-retryable error (auth wrong, bad address, etc.)
+                logger.error("email_send_failed", action="password_reset", to=to_email, error=str(exc))
+                return False
+
+        logger.error(
+            "email_send_exhausted_retries",
+            action="password_reset",
+            to=to_email,
+            retries=MAX_RETRIES,
+            error=str(last_error),
+        )
+        return False
 
 
 @lru_cache

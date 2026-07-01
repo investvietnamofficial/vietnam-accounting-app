@@ -2,14 +2,38 @@ from contextlib import asynccontextmanager
 import uuid
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from sqlalchemy import text
 
 from app.core.database import AsyncSessionLocal, engine
 from app.core.config import get_settings
 from app.api.routes import auth, companies, documents, invoices, reports
+
+# ── Prometheus metrics ──────────────────────────────────────────────────────────
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests",
+    ["method", "endpoint", "status_code"],
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "endpoint"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
+DOCUMENT_UPLOAD_COUNT = Counter(
+    "document_uploads_total",
+    "Total document uploads",
+    ["status"],  # success | duplicate | error
+)
+OCR_PROCESSING_COUNT = Counter(
+    "ocr_processing_total",
+    "Total OCR processing runs",
+    ["engine", "status"],  # success | error
+)
 
 settings = get_settings()
 
@@ -86,6 +110,23 @@ async def add_request_id(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def record_metrics(request: Request, call_next):
+    """Record request count and latency for Prometheus scraping."""
+    import time
+    if request.url.path in ("/metrics", "/health", "/healthz"):
+        return await call_next(request)
+    start = time.perf_counter()
+    response = await call_next(request)
+    elapsed = time.perf_counter() - start
+    method = request.method
+    endpoint = request.url.path
+    status = str(response.status_code)
+    REQUEST_COUNT.labels(method=method, endpoint=endpoint, status_code=status).inc()
+    REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(elapsed)
+    return response
+
+
 # ── Global exception handler — never leak internals ───────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -159,7 +200,10 @@ async def debug_db():
     """
     TEMPORARY: returns DB state snapshot for deployment verification.
     Lists tables, Alembic version, and sample row counts.
+    Only available when APP_ENV is not 'production'.
     """
+    if settings.is_production:
+        raise HTTPException(status_code=403, detail="Not available in production")
     try:
         async with AsyncSessionLocal() as db:
             # List tables
@@ -191,3 +235,12 @@ async def debug_db():
     except Exception as exc:
         logger.error("debug_db_failed", error=str(exc))
         return {"status": "error", "detail": str(exc)}, 500
+
+
+@app.get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics scrape endpoint.
+    Collected by Prometheus server at scrape_interval.
+    """
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
