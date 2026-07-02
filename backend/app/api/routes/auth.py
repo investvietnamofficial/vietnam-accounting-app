@@ -66,6 +66,20 @@ def _get_redis_client():
         return None
 
 
+def get_client_ip(request: Request) -> str:
+    """Extract the real client IP, supporting Cloudflare/Traefik/Nginx/Coolify."""
+    cf_ip = request.headers.get("CF-Connecting-IP", "").strip()
+    if cf_ip:
+        return cf_ip.split(",")[0].strip()
+    xff = request.headers.get("X-Forwarded-For", "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    xri = request.headers.get("X-Real-IP", "").strip()
+    if xri:
+        return xri.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 def _check_rate_limit(ip: str) -> bool:
     """
     Return True if the login request from `ip` is allowed.
@@ -104,7 +118,7 @@ async def login(
     form: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not _check_rate_limit(client_ip):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

@@ -93,7 +93,7 @@ services:
     volumes:
       - backend_storage:/app/storage
     command: >
-      sh -c "alembic -c alembic.ini upgrade head && exec celery -A app.workers.celery_app worker --loglevel=info -Q celery,ocr --concurrency=4 --max-tasks-per-child=100"
+      sh -c "exec celery -A app.workers.celery_app worker --loglevel=info -Q celery,ocr --concurrency=4 --max-tasks-per-child=100"
 
   web:
     image: vn-accounting-web:latest

@@ -1,6 +1,6 @@
 """Invoice CRUD and verification routes."""
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Literal, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.config import get_settings
 from app.models import Invoice, VATRate, DocumentType
+from app.workers.tasks import verify_einvoice_async
 
 
 router = APIRouter()
@@ -161,11 +163,15 @@ async def verify_einvoice(invoice_id: str, current_user=Depends(get_current_user
 
     inv.einvoice_verified = bool(verification.get("verified"))
     if verification.get("verified"):
-        inv.einvoice_verified_at = datetime.utcnow()
+        inv.einvoice_verified_at = datetime.now(UTC)
     else:
         inv.einvoice_verified_at = None
     inv.notes = (inv.notes or "") + "\nManual GDT verification result: " + json.dumps(verification, ensure_ascii=False)
     await db.commit()
+    # L-2: dispatch async re-verification via Celery (non-blocking background refresh)
+    settings = get_settings()
+    if settings.use_celery and not verification.get("error"):
+        verify_einvoice_async.delay(inv.id)
     response = _invoice_dict(inv)
     response["gdt_verification"] = verification
     return response
@@ -200,4 +206,49 @@ def _invoice_dict(inv: Invoice) -> dict:
         "confidence": inv.extraction_confidence,
         "created_at": inv.created_at,
         "updated_at": inv.updated_at,
+        # H-5: direction fields
+        "invoice_direction": inv.invoice_direction,
+        "direction_status": inv.direction_status,
+        "direction_confidence": float(inv.direction_confidence) if inv.direction_confidence is not None else None,
+    }
+
+
+@router.get("/unconfirmed-direction")
+async def list_unconfirmed_direction(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List invoices with uncertain direction for pre-filing review (H-5)."""
+    # Filter: not "confirmed", confidence < 0.7, or NULL
+    unconfirmed_filter = or_(
+        Invoice.direction_status != "confirmed",
+        Invoice.direction_confidence < 0.7,
+        Invoice.direction_confidence.is_(None),
+    )
+    base_filter = Invoice.company_id == current_user.company_id
+
+    # Paginated query
+    paginated_query = (
+        select(Invoice)
+        .where(base_filter, unconfirmed_filter)
+        .order_by(Invoice.invoice_date.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await db.execute(paginated_query)
+    invoices = result.scalars().all()
+
+    # Count query
+    count_query = select(func.count()).select_from(Invoice).where(base_filter, unconfirmed_filter)
+    count_result = await db.execute(count_query)
+    total = count_result.scalar() or 0
+
+    return {
+        "items": [_invoice_dict(inv) for inv in invoices],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size if page_size > 0 else 0,
     }

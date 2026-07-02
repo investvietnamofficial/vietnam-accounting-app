@@ -53,6 +53,36 @@ def send_email_task(self, to_email: str, reset_token: str):
         raise self.retry(exc=exc)
 
 
+@celery_app.task(bind=True, name="verify-einvoice-async", max_retries=5, default_retry_delay=60)
+def verify_einvoice_async(self, invoice_id: str):
+    """Background re-verification of an invoice against the GDT portal."""
+    import sys
+    sys.path.insert(0, "/Users/gilbertneo/Desktop/My Apps/Vietnam Accounting App/vn-accounting/backend")
+    from app.core.database import SessionLocal
+    from app.models import Invoice
+    from app.services.einvoice import GDTInvoiceVerificationService
+    from datetime import UTC, datetime
+
+    db = SessionLocal()
+    try:
+        inv = db.get(Invoice, invoice_id)
+        if not inv:
+            return {"status": "error", "invoice_id": invoice_id}
+        gdt = GDTInvoiceVerificationService()
+        result = gdt.verify_invoice(inv)
+        inv.einvoice_verified = result.get("verified", False)
+        inv.einvoice_verified_at = datetime.now(UTC)
+        inv.einvoice_verification_data = result
+        db.commit()
+        return {"status": "ok", "invoice_id": invoice_id}
+    except Exception as exc:
+        db.rollback()
+        countdown = 60 * (self.request.retries + 1)
+        raise self.retry(exc=exc, countdown=countdown)
+    finally:
+        db.close()
+
+
 async def process_document_now(document_id: str):
     """Inline processing path for local MVP usage without a Celery worker."""
     return await _process_document_async(None, document_id)
@@ -64,7 +94,8 @@ async def _process_document_async(task, document_id: str):
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.core.config import get_settings
-    from app.models import Document, DocumentStatus, Invoice
+    from app.models import Company, DirectionStatus, Document, DocumentStatus, Invoice
+    from app.api.routes.reports import _invoice_direction
     from app.services.einvoice import GDTInvoiceVerificationService
     from app.services.extraction.claude_extractor import ExtractionService
     from app.services.ocr.providers import get_ocr_provider
@@ -166,11 +197,39 @@ async def _process_document_async(task, document_id: str):
 
             invoice_result = await db.execute(select(Invoice).where(Invoice.document_id == doc.id))
             invoice = invoice_result.scalar_one_or_none()
+
+            # H-5: Determine and store invoice direction at extraction time
+            direction = None
+            direction_status = DirectionStatus.UNKNOWN
+            direction_confidence = None
+            if doc.company_id:
+                co_result = await db.execute(select(Company).where(Company.id == doc.company_id))
+                company = co_result.scalar_one_or_none()
+                if company:
+                    # Build a minimal invoice-like dict from extracted data for direction logic
+                    _fake_inv = type("FakeInv", (), {
+                        "seller_tax_code": extracted.get("seller_tax_code"),
+                        "buyer_tax_code": extracted.get("buyer_tax_code"),
+                        "invoice_series": extracted.get("invoice_series"),
+                        "invoice_number": extracted.get("invoice_number"),
+                        "invoice_date": extracted.get("invoice_date"),
+                    })()
+                    direction, is_certain = _invoice_direction(_fake_inv, company)
+                    direction_status = DirectionStatus.INFERRED if is_certain else DirectionStatus.UNKNOWN
+                    direction_confidence = 1.0 if is_certain else 0.5
+
             if invoice is None:
                 # M-5 + H-4: Handle concurrent upload race — if another process already
                 # created the invoice for the same (company, series, number), reuse it.
                 try:
-                    new_invoice = Invoice(company_id=doc.company_id, document_id=doc.id)
+                    new_invoice = Invoice(
+                        company_id=doc.company_id,
+                        document_id=doc.id,
+                        # H-5: direction fields populated at extraction time
+                        invoice_direction=direction,
+                        direction_status=direction_status,
+                        direction_confidence=direction_confidence,
+                    )
                     db.add(new_invoice)
                     await db.flush()  # flush to trigger constraint before commit
                     invoice = new_invoice
@@ -197,7 +256,18 @@ async def _process_document_async(task, document_id: str):
             invoice.invoice_date = _parse_invoice_date(extracted.get("invoice_date"))
             invoice.invoice_type = extracted.get("invoice_type") or doc.doc_type
             # currency_code: default VND; non-VND is flagged at extraction validation
-            invoice.currency_code = extracted.get("currency_code") or "VND"
+            # M-8: currency extraction with FX support
+            currency_code = extracted.get("currency_code", "VND")
+            exchange_rate = extracted.get("exchange_rate_estimate")
+            converted_vnd = extracted.get("converted_vnd_amount")
+            invoice.currency_code = currency_code
+            if exchange_rate is not None:
+                invoice.exchange_rate = float(exchange_rate)
+                invoice.exchange_source = "extraction_estimate"
+            if converted_vnd is not None:
+                invoice.converted_vnd_amount = int(converted_vnd)
+            elif currency_code == "VND":
+                invoice.converted_vnd_amount = invoice.total_amount
             invoice.seller_name = extracted.get("seller_name")
             invoice.seller_tax_code = extracted.get("seller_tax_code")
             invoice.seller_address = extracted.get("seller_address")
@@ -213,6 +283,10 @@ async def _process_document_async(task, document_id: str):
             invoice.notes = extracted.get("notes")
             # H-3: propagate extraction confidence from document to invoice
             invoice.extraction_confidence = doc.extraction_confidence
+            # H-5: also set direction fields on existing invoices (race condition path)
+            invoice.invoice_direction = direction
+            invoice.direction_status = direction_status
+            invoice.direction_confidence = direction_confidence
 
             doc.processed_at = datetime.now(UTC)
             await db.commit()

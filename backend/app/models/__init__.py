@@ -79,6 +79,12 @@ class TaxDeclarationPeriod(str, PyEnum):
     QUARTERLY = "quarterly"
 
 
+class DirectionStatus(str, PyEnum):
+    CONFIRMED = "confirmed"
+    INFERRED = "inferred"
+    UNKNOWN = "unknown"
+
+
 # ---------------------------------------------------------------------------
 # Mixins
 # ---------------------------------------------------------------------------
@@ -204,6 +210,21 @@ class Invoice(TimestampMixin, Base):
     # Invoice identity
     invoice_series: Mapped[str | None] = mapped_column(String(20))   # Ký hiệu (e.g. "AA/23E")
     invoice_number: Mapped[str | None] = mapped_column(String(50))   # Số hóa đơn
+
+    # Invoice direction (H-5): "inbound" or "outbound"
+    invoice_direction: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    direction_status: Mapped[DirectionStatus] = mapped_column(
+        Enum(DirectionStatus, values_callable=lambda x: [e.value for e in x]),
+        default=DirectionStatus.UNKNOWN,
+        nullable=False,
+    )
+    direction_confidence: Mapped[float | None] = mapped_column(Numeric(3, 2), nullable=True)
+
+    # Currency conversion (M-8)
+    exchange_rate: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+    exchange_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    converted_vnd_amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
     invoice_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     invoice_type: Mapped[DocumentType] = mapped_column(
         Enum(DocumentType, values_callable=lambda x: [e.value for e in x]),
@@ -235,6 +256,7 @@ class Invoice(TimestampMixin, Base):
     einvoice_code: Mapped[str | None] = mapped_column(String(100))  # Mã CQT
     einvoice_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     einvoice_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    einvoice_verification_data: Mapped[dict | None] = mapped_column(JSONB)  # H-5: full GDT response
 
     # Line items stored as JSONB
     line_items: Mapped[list | None] = mapped_column(JSONB)
@@ -244,6 +266,11 @@ class Invoice(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
     # Extraction quality (synced from Document.extraction_confidence after processing)
     extraction_confidence: Mapped[float | None] = mapped_column(Numeric(5, 4))
+
+    # Direction fields (H-5): populated by track-e during direction classification
+    invoice_direction: Mapped[str | None] = mapped_column(String(20))       # "sale" | "purchase" | None
+    direction_status: Mapped[str] = mapped_column(String(20), default="unknown")  # "unknown" | "pending_review" | "confirmed"
+    direction_confidence: Mapped[float | None] = mapped_column(Numeric(3, 2))   # 0.0–1.0
 
     document: Mapped["Document"] = relationship("Document", back_populates="invoice")
     journal_entries: Mapped[list["JournalEntry"]] = relationship("JournalEntry", back_populates="invoice")
