@@ -188,3 +188,4 @@ Do not describe this repo as production-ready.
 - Update `TODO.md` and `HANDOFF.md` before ending every session.
 - Keep `AGENTS.md` stable and canonical; only change it when repo truth changes.
 - If you make claims about readiness, tests, or deployment, tie them to commands that were actually run.
+- **Multi-agent parallel work**: When another agent has already modified a file (check `git log -1`), always `grep` the current file state before adding new model fields, routes, or logic. Two agents wiring different parts of the same feature may both touch the same file — always read the live version, not the committed version, to avoid duplicating work.
