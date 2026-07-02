@@ -125,3 +125,29 @@ def test_upload_integrity_error_on_flush_is_handled_gracefully():
                 assert exc.status_code == 409
             except IntegrityError:
                 pytest.fail("IntegrityError must be caught and converted to HTTPException")
+
+
+# M-4 regression: verify stale processing retry is implemented
+import app.api.routes.documents as docs_mod
+_docs_src = inspect.getsource(docs_mod)
+assert "STALE_PROCESSING_TIMEOUT_MINUTES" in _docs_src, (
+    "documents.py must define STALE_PROCESSING_TIMEOUT_MINUTES constant for M-4"
+)
+assert "is_stale_processing" in _docs_src, (
+    "retry_document must check is_stale_processing for M-4"
+)
+
+
+def test_filename_sanitization_in_r2_service():
+    """L-1 regression: R2 storage key must not contain path traversal from filename."""
+    import re
+    import app.services.storage.r2_service as r2_mod
+    import inspect
+
+    upload_src = inspect.getsource(r2_mod.R2Service.upload)
+    assert "re.sub" in upload_src or "[^a-zA-Z0-9._-]" in upload_src, (
+        "R2Service.upload must sanitize filename with regex to block traversal chars"
+    )
+    assert "split(\"/\")" in upload_src or '"/"' in upload_src, (
+        "R2Service.upload must strip directory components from filename"
+    )
