@@ -85,6 +85,20 @@ async def _process_document_async(task, document_id: str):
             logger.error("document_not_found", document_id=document_id)
             return {"status": "error", "message": "Document not found"}
 
+        # Guard: if document already has an invoice, skip processing
+        # (prevents duplicate invoices when same checksum is re-uploaded while
+        # a prior pipeline run is in-progress or was already completed)
+        existing_invoice = await db.execute(
+            select(Invoice).where(Invoice.document_id == doc.id)
+        )
+        if existing_invoice.scalar_one_or_none():
+            logger.info("document_already_processed", document_id=document_id,
+                        reason="existing_invoice_found")
+            doc.status = DocumentStatus.EXTRACTED
+            await db.commit()
+            return {"status": "skipped", "document_id": document_id,
+                    "reason": "existing_invoice_found"}
+
         try:
             doc.processing_attempts = (doc.processing_attempts or 0) + 1
             doc.status = DocumentStatus.PROCESSING
