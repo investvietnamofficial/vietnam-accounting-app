@@ -13,7 +13,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { ProtectedPage } from "@/components/protected-page";
 import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/components/auth-provider";
-import { useFilteredInvoices, useVerifyEInvoice } from "@/hooks/useApi";
+import { useFilteredInvoices, useUnconfirmedDirectionInvoices, useVerifyEInvoice } from "@/hooks/useApi";
 import type { Invoice } from "@/types";
 
 const vnd = new Intl.NumberFormat("vi-VN", {
@@ -46,6 +46,7 @@ export default function InvoicesPage() {
   };
 
   const { data, isLoading, refetch, isFetching } = useFilteredInvoices(params);
+  const { data: unconfirmedData } = useUnconfirmedDirectionInvoices();
   const invoices: Invoice[] = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / 20);
@@ -203,6 +204,13 @@ export default function InvoicesPage() {
               ))}
             </div>
           </div>
+
+          {/* H-5: Direction review warning */}
+          {unconfirmedData && unconfirmedData.total > 0 && (
+            <div className="bg-yellow-50 border border-yellow-300 rounded p-3 text-sm">
+              ⚠️ {unconfirmedData.total} invoice(s) have unconfirmed direction — review before filing.
+            </div>
+          )}
 
           {/* Table */}
           <div className="overflow-hidden rounded-lg border bg-white">

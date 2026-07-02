@@ -7,7 +7,7 @@ instead of the earlier MVP aggregates.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from io import BytesIO
 from typing import Literal
@@ -166,12 +166,14 @@ def _build_annexes(invoices: list[Invoice], company: Company) -> tuple[dict, dic
             "title": "Phu luc bang ke hoa don mua vao",
             "items": purchase_items,
             "totals": purchase_totals,
+            "warnings": [],
         },
         {
             "code": "01-2/GTGT",
             "title": "Phu luc bang ke hoa don ban ra",
             "items": sales_items,
             "totals": sales_totals,
+            "warnings": [],
         },
     )
 
@@ -198,6 +200,7 @@ def _invoice_report_row(index: int, inv: Invoice, company: Company) -> dict:
         "id": inv.id,
         "direction": direction,
         "direction_certain": direction_certain,
+        "direction_needs_review": direction_certain is False,
         "invoice_date": inv.invoice_date.date().isoformat() if inv.invoice_date else None,
         "invoice_series": inv.invoice_series,
         "invoice_number": inv.invoice_number,
@@ -371,7 +374,7 @@ def _build_vat_workbook(summary: dict, company: Company) -> BytesIO:
     summary_ws.append(["Company Name", company.name])
     summary_ws.append(["Tax Code", company.tax_code])
     summary_ws.append(["Period", _period_label(summary["period_type"], summary["period"], summary["year"])])
-    summary_ws.append(["Generated At", summary.get("generated_at", datetime.utcnow().isoformat())])
+    summary_ws.append(["Generated At", summary.get("generated_at", datetime.now(UTC).isoformat())])
     summary_ws.append([])
 
     summary_ws.append(["", "Input VAT (VND)", "Output VAT (VND)"])
@@ -765,6 +768,15 @@ def _build_vat_declaration_summary(
         if issue:
             warnings.append({"type": issue.type, "message": issue.message, "invoice_ids": issue.invoice_ids})
 
+    # H-5: track unconfirmed direction count and append warning
+    unconfirmed = sum(1 for inv in invoices if not _invoice_direction(inv, company)[1])
+    if unconfirmed > 0:
+        warnings.append({
+            "type": "direction_unconfirmed",
+            "count": unconfirmed,
+            "message": f"{unconfirmed} invoice(s) have unconfirmed direction. Please review before filing."
+        })
+
     return {
         "year": year,
         "period": period,
@@ -776,7 +788,7 @@ def _build_vat_declaration_summary(
         "invoice_count": len(invoices),
         "filing_deadline": get_vat_declaration_deadline(year, period, period_type),
         "warnings": warnings,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "company_name": company.name,
         "tax_code": company.tax_code,
         "period_label": _period_label(period_type, period, year),

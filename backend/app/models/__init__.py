@@ -267,11 +267,6 @@ class Invoice(TimestampMixin, Base):
     # Extraction quality (synced from Document.extraction_confidence after processing)
     extraction_confidence: Mapped[float | None] = mapped_column(Numeric(5, 4))
 
-    # Direction fields (H-5): populated by track-e during direction classification
-    invoice_direction: Mapped[str | None] = mapped_column(String(20))       # "sale" | "purchase" | None
-    direction_status: Mapped[str] = mapped_column(String(20), default="unknown")  # "unknown" | "pending_review" | "confirmed"
-    direction_confidence: Mapped[float | None] = mapped_column(Numeric(3, 2))   # 0.0–1.0
-
     document: Mapped["Document"] = relationship("Document", back_populates="invoice")
     journal_entries: Mapped[list["JournalEntry"]] = relationship("JournalEntry", back_populates="invoice")
 

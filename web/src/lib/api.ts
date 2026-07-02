@@ -170,6 +170,10 @@ export const invoicesApi = {
     const { data } = await apiClient.post(`/invoices/${id}/verify-einvoice`);
     return data;
   },
+  unconfirmedDirection: async (params?: { page?: number; page_size?: number }) => {
+    const { data } = await apiClient.get("/invoices/unconfirmed-direction", { params });
+    return data;
+  },
 };
 
 export const reportsApi = {

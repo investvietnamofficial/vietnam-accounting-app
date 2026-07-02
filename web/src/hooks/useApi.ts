@@ -64,6 +64,12 @@ export const useVerifyEInvoice = (invoiceId: string) => {
   });
 };
 
+export const useUnconfirmedDirectionInvoices = (page = 1, pageSize = 50) =>
+  useQuery({
+    queryKey: ["invoices", "unconfirmed-direction", page],
+    queryFn: () => invoicesApi.unconfirmedDirection({ page, page_size: pageSize }),
+  });
+
 // ============================================================
 // Reports
 // ============================================================

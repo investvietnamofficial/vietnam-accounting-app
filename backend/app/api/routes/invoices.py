@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.config import get_settings
-from app.models import Invoice, VATRate, DocumentType
+from app.models import Invoice, VATRate, DocumentType, DirectionStatus
 from app.workers.tasks import verify_einvoice_async
 
 
@@ -221,9 +221,9 @@ async def list_unconfirmed_direction(
     db: AsyncSession = Depends(get_db),
 ):
     """List invoices with uncertain direction for pre-filing review (H-5)."""
-    # Filter: not "confirmed", confidence < 0.7, or NULL
+    # Filter: not confirmed, confidence < 0.7, or NULL
     unconfirmed_filter = or_(
-        Invoice.direction_status != "confirmed",
+        Invoice.direction_status != DirectionStatus.CONFIRMED,
         Invoice.direction_confidence < 0.7,
         Invoice.direction_confidence.is_(None),
     )
