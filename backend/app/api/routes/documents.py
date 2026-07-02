@@ -4,10 +4,12 @@ Documents API — upload invoices, poll processing status, list documents.
 
 import hashlib
 import logging
+from datetime import datetime, timedelta, UTC as dt_UTC
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -26,6 +28,9 @@ ALLOWED_MIME_TYPES = {
     "application/pdf",
 }
 MAX_FILE_SIZE_MB = 20
+
+# M-4: Documents stuck in PROCESSING for longer than this are eligible for retry.
+STALE_PROCESSING_TIMEOUT_MINUTES = 5
 
 
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
@@ -113,7 +118,27 @@ async def upload_document(
         status=DocumentStatus.PENDING,
     )
     db.add(doc)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        # Race condition: another request inserted the same doc while we were
+        # uploading. Find the existing record and return it instead.
+        existing = await _find_existing_document(db, current_user.company_id, checksum)
+        if existing:
+            logger.info("duplicate_on_flush_returning_existing", extra={"document_id": existing.id})
+            return {
+                "document_id": existing.id,
+                "job_id": existing.celery_job_id,
+                "status": existing.status.value,
+                "duplicate": True,
+                "message": "Duplicate upload race-condition handled. Returning existing document.",
+            }
+        # No existing doc found — something else IntegrityError'd; return 409.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Document upload conflict. Please retry.",
+        )
 
     job_id = await _dispatch_processing(doc, background_tasks)
     await db.commit()
@@ -192,10 +217,21 @@ async def retry_document(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    if doc.status not in {DocumentStatus.FAILED, DocumentStatus.REJECTED}:
-        raise HTTPException(status_code=409, detail="Only failed or rejected documents can be retried")
     if doc.duplicate_of_document_id:
         raise HTTPException(status_code=409, detail="Duplicate records cannot be retried directly")
+
+    # M-4: Allow retrying stale PROCESSING documents (stuck > STALE_PROCESSING_TIMEOUT_MINUTES)
+    # as well as FAILED and REJECTED ones.
+    is_stale_processing = (
+        doc.status == DocumentStatus.PROCESSING
+        and doc.created_at is not None
+        and datetime.now(dt_UTC) - doc.created_at > timedelta(minutes=STALE_PROCESSING_TIMEOUT_MINUTES)
+    )
+    if doc.status not in {DocumentStatus.FAILED, DocumentStatus.REJECTED} and not is_stale_processing:
+        raise HTTPException(
+            status_code=409,
+            detail="Only failed, rejected, or stale processing documents can be retried",
+        )
 
     doc.status = DocumentStatus.PENDING
     doc.processing_error = None

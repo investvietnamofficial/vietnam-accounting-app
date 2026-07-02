@@ -34,6 +34,25 @@ def process_document(self, document_id: str):
     return run_async(_process_document_async(self, document_id))
 
 
+# M-2: Send password-reset email as a background Celery task to avoid blocking
+# the HTTP response. Falls back to inline send when Celery is not configured.
+@celery_app.task(
+    bind=True,
+    name="app.workers.tasks.send_email",
+    max_retries=3,
+    default_retry_delay=30,
+)
+def send_email_task(self, to_email: str, reset_token: str):
+    """Send a password-reset email asynchronously via Celery."""
+    from app.services.email.email_service import get_email_service
+    try:
+        get_email_service().send_password_reset_email(to_email, reset_token)
+        logger.info("send_email_celery_task_success", to=to_email)
+    except Exception as exc:
+        logger.error("send_email_celery_task_failed", to=to_email, error=str(exc))
+        raise self.retry(exc=exc)
+
+
 async def process_document_now(document_id: str):
     """Inline processing path for local MVP usage without a Celery worker."""
     return await _process_document_async(None, document_id)
@@ -134,14 +153,36 @@ async def _process_document_async(task, document_id: str):
             invoice_result = await db.execute(select(Invoice).where(Invoice.document_id == doc.id))
             invoice = invoice_result.scalar_one_or_none()
             if invoice is None:
-                invoice = Invoice(company_id=doc.company_id, document_id=doc.id)
-                db.add(invoice)
+                # M-5 + H-4: Handle concurrent upload race — if another process already
+                # created the invoice for the same (company, series, number), reuse it.
+                try:
+                    new_invoice = Invoice(company_id=doc.company_id, document_id=doc.id)
+                    db.add(new_invoice)
+                    await db.flush()  # flush to trigger constraint before commit
+                    invoice = new_invoice
+                except Exception as exc:
+                    # Check if it's an integrity violation from the unique constraint
+                    if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
+                        await db.rollback()
+                        # Fetch the existing invoice that caused the constraint violation
+                        existing = await db.execute(
+                            select(Invoice).where(
+                                Invoice.company_id == doc.company_id,
+                                Invoice.invoice_series == extracted.get("invoice_series"),
+                                Invoice.invoice_number == extracted.get("invoice_number"),
+                            )
+                        )
+                        invoice = existing.scalar_one_or_none()
+                        if invoice is None:
+                            raise  # re-raise if we can't find it (different error)
+                    else:
+                        raise
 
             invoice.invoice_series = extracted.get("invoice_series")
             invoice.invoice_number = extracted.get("invoice_number")
             invoice.invoice_date = _parse_invoice_date(extracted.get("invoice_date"))
             invoice.invoice_type = extracted.get("invoice_type") or doc.doc_type
-            # currency_code: default VND; non-VND is flagged in extraction validation
+            # currency_code: default VND; non-VND is flagged at extraction validation
             invoice.currency_code = extracted.get("currency_code") or "VND"
             invoice.seller_name = extracted.get("seller_name")
             invoice.seller_tax_code = extracted.get("seller_tax_code")
@@ -156,6 +197,8 @@ async def _process_document_async(task, document_id: str):
             invoice.line_items = extracted.get("line_items", [])
             invoice.einvoice_code = extracted.get("einvoice_code")
             invoice.notes = extracted.get("notes")
+            # H-3: propagate extraction confidence from document to invoice
+            invoice.extraction_confidence = doc.extraction_confidence
 
             doc.processed_at = datetime.now(UTC)
             await db.commit()

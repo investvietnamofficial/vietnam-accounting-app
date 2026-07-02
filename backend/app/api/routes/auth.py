@@ -33,20 +33,61 @@ from app.schemas.auth import (
     validate_password_strength,
 )
 from app.services.email.email_service import get_email_service
+from app.workers.tasks import send_email_task
 
 router = APIRouter()
 settings = get_settings()
 
 # ── In-memory rate limiter: 5 login attempts per minute per IP ───────────────
+# M-3 upgrade: replaced by Redis-backed limiter below, kept as fallback.
 _login_lock = Lock()
 _rate_store: dict[str, list[float]] = defaultdict(list)
 
 _LOGIN_RATE_LIMIT = 5
 _LOGIN_WINDOW_SECS = 60
 
+# M-3: Redis-backed rate limiter using settings.redis_url.
+# Falls back to in-memory store if Redis is unavailable.
+_redis_client = None
+
+
+def _get_redis_client():
+    """Lazily initialise a Redis client. Returns None if unavailable."""
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    try:
+        import redis
+        _redis_client = redis.from_url(settings.redis_url, socket_connect_timeout=2)
+        _redis_client.ping()
+        return _redis_client
+    except Exception:
+        _redis_client = None
+        return None
+
 
 def _check_rate_limit(ip: str) -> bool:
-    """Return True if request is allowed, False if rate limited."""
+    """
+    Return True if the login request from `ip` is allowed.
+    Uses Redis SETEX + INCR when available; falls back to the in-memory store.
+    """
+    client = _get_redis_client()
+    key = f"login_rl:{ip}"
+
+    if client is not None:
+        try:
+            # Atomic: SETEX sets expiry, INCR increments — both in one round-trip.
+            pipe = client.pipeline()
+            pipe.incr(key)
+            pipe.expire(key, _LOGIN_WINDOW_SECS)
+            results = pipe.execute()
+            count = results[0]
+            return count <= _LOGIN_RATE_LIMIT
+        except Exception:
+            # Redis error — fall through to in-memory fallback
+            pass
+
+    # In-memory fallback (process-local; does not survive restarts)
     now = time.time()
     with _login_lock:
         window = [t for t in _rate_store[ip] if now - t < _LOGIN_WINDOW_SECS]
@@ -162,8 +203,13 @@ async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Dep
 
     if user and user.is_active:
         reset_token = create_password_reset_token(user.id)
-        email_service = get_email_service()
-        email_service.send_password_reset_email(user.email, reset_token)
+        # M-2: dispatch email as background Celery task — fire-and-forget from
+        # the HTTP response path; Celery retries on failure independently.
+        if settings.use_celery:
+            send_email_task.delay(user.email, reset_token)
+        else:
+            # Fallback for local development without a Celery worker
+            get_email_service().send_password_reset_email(user.email, reset_token)
 
     return {"message": message}
 

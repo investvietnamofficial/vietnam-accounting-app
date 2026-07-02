@@ -1,6 +1,12 @@
 from datetime import UTC, datetime
 
-from app.api.routes.reports import _aggregate_cit_bases, _build_vat_declaration_summary, _vat_rate_float, _invoice_direction
+from app.api.routes.reports import (
+    _aggregate_cit_bases,
+    _build_vat_declaration_summary,
+    _invoice_report_row,
+    _invoice_direction,
+    _vat_rate_float,
+)
 from app.models import Company, Invoice, JournalEntry, JournalEntryLine, JournalEntryStatus, VATRate
 
 
@@ -119,6 +125,103 @@ def test_aggregate_cit_bases_uses_posted_journal_lines():
     assert deductible_expenses == 600_000_000
     assert other_income == 50_000_000
     assert other_expenses == 20_000_000
+
+
+def test_vat_rate_float_returns_none_for_exempt_and_na():
+    """C-1 regression: _vat_rate_float must not crash on EXEMPT or NOT_APPLICABLE."""
+    assert _vat_rate_float(VATRate.EXEMPT) is None
+    assert _vat_rate_float(VATRate.NOT_APPLICABLE) is None
+    # Standard rates still work
+    assert _vat_rate_float(VATRate.TEN) == 0.10
+    assert _vat_rate_float(VATRate.FIVE) == 0.05
+    assert _vat_rate_float(VATRate.EIGHT) == 0.08
+    assert _vat_rate_float(VATRate.ZERO) == 0.0
+
+
+def test_build_vat_declaration_summary_does_not_crash_on_exempt_or_na_invoices():
+    """C-1 regression: VAT summary must not crash when invoice vat_rate is EXEMPT or NOT_APPLICABLE."""
+    company = _company()
+    invoices = [
+        Invoice(
+            id="inv-exempt",
+            company_id=company.id,
+            document_id="doc-exempt",
+            invoice_date=datetime(2026, 3, 15, tzinfo=UTC),
+            invoice_series="AA/26E",
+            invoice_number="001",
+            invoice_type="invoice_vat",
+            currency_code="VND",
+            seller_tax_code="0312345678",
+            buyer_tax_code=company.tax_code,
+            subtotal_amount=50_000_000,
+            vat_rate=VATRate.EXEMPT,
+            vat_amount=0,
+            total_amount=50_000_000,
+            einvoice_verified=False,
+        ),
+        Invoice(
+            id="inv-na",
+            company_id=company.id,
+            document_id="doc-na",
+            invoice_date=datetime(2026, 3, 15, tzinfo=UTC),
+            invoice_series="AA/26E",
+            invoice_number="002",
+            invoice_type="invoice_vat",
+            currency_code="VND",
+            seller_tax_code="0312345678",
+            buyer_tax_code=company.tax_code,
+            subtotal_amount=75_000_000,
+            vat_rate=VATRate.NOT_APPLICABLE,
+            vat_amount=0,
+            total_amount=75_000_000,
+            einvoice_verified=False,
+        ),
+    ]
+
+    # Must not raise
+    summary = _build_vat_declaration_summary(
+        invoices=invoices,
+        company=company,
+        year=2026,
+        period=1,
+        period_type="quarterly",
+        previous_vat_credit=0,
+        import_purchase_value=0,
+        import_purchase_vat=0,
+        deductible_input_vat_override=None,
+        adjustment_decrease=0,
+        adjustment_increase=0,
+        transferred_vat_credit=0,
+        investment_project_offset_vat=0,
+        refund_requested_vat=0,
+    )
+    assert summary["filing_fields"]["23"] == 125_000_000  # exempt + na both counted in total base
+    assert summary["purchase_annex"]["totals"]["count"] == 2
+
+
+def test_invoice_direction_returns_uncertain_when_seller_tax_code_missing():
+    """H-5 regression: invoice with no seller_tax_code returns (purchase, False)."""
+    company = _company()
+    invoice_no_seller = Invoice(
+        id="inv-noseller",
+        company_id=company.id,
+        document_id="doc-noseller",
+        invoice_date=datetime(2026, 3, 15, tzinfo=UTC),
+        invoice_series="AA/26E",
+        invoice_number="003",
+        invoice_type="invoice_vat",
+        currency_code="VND",
+        seller_tax_code=None,  # missing seller MST
+        buyer_tax_code=company.tax_code,
+        subtotal_amount=10_000_000,
+        vat_rate=VATRate.TEN,
+        vat_amount=1_000_000,
+        total_amount=11_000_000,
+        einvoice_verified=False,
+    )
+    direction, is_certain = _invoice_direction(invoice_no_seller, company)
+    assert direction == "purchase"
+    assert is_certain is False
 
 
 def test_vat_rate_float_handles_exempt_and_na():

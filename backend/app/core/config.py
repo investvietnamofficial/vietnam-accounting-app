@@ -25,6 +25,16 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
+    redis_password: str = ""  # L-4: optional; prepended to redis_url when set
+
+    @property
+    def redis_url_with_password(self) -> str:
+        """Redis URL with password injected if redis_password is set."""
+        if self.redis_password:
+            # redis://[:password@]host:port/db → redis://password@host:port/db
+            import re
+            return re.sub(r"://", f"://{self.redis_password}@", self.redis_url, count=1)
+        return self.redis_url
 
     # JWT
     jwt_secret_key: str = ""

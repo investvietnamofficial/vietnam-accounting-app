@@ -17,8 +17,9 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}"]  # L-4: password auth (empty default)
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -40,6 +41,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}  # Required — no fallback
       DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}  # Required — no fallback
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}  # L-4: Redis auth password (empty default)
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}  # Required in production — set Coolify env var
       LOCAL_STORAGE_DIR: /app/storage
     depends_on:
@@ -78,6 +80,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}  # L-4: Redis auth password
       USE_CELERY: "true"
       LOCAL_STORAGE_DIR: /app/storage
       OCR_ENGINE: ${OCR_ENGINE:-google}

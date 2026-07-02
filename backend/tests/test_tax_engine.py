@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from app.services.extraction.claude_extractor import ExtractionService
 from app.services.tax.vn_tax_engine import (
     CIT_STANDARD_RATE,
     calculate_mst_check_digit,
@@ -53,3 +54,20 @@ def test_calculate_quarterly_cit_provision_uses_ytd_taxable_income_and_q4_floor(
     assert result.minimum_cumulative_payment == 96_000_000
     assert result.amount_due == 56_000_000
     assert result.cit_rate == Decimal("0.20")
+
+
+def test_amount_normalization_vietnamese_and_european():
+    """
+    Regression: extraction must correctly parse Vietnamese (dot=thousand-sep)
+    and European (comma=decimal) amount formats into integer VND.
+    """
+    extractor = ExtractionService()
+
+    # Vietnamese dot-as-thousand-separator: 1.500.000 = 1,500,000
+    assert extractor._normalize_amount_string("1.500.000") == 1_500_000
+    # European decimal comma truncated: 1.500.000,50 → 1.500.000 → 1500000
+    assert extractor._normalize_amount_string("1.500.000,50") == 1_500_000
+    # Plain integer string
+    assert extractor._normalize_amount_string("1500000") == 1_500_000
+    # Mixed formats
+    assert extractor._normalize_amount_string("10.000.000") == 10_000_000

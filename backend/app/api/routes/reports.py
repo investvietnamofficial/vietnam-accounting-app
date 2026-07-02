@@ -214,30 +214,6 @@ def _invoice_report_row(index: int, inv: Invoice, company: Company) -> dict:
         "einvoice_verified": inv.einvoice_verified,
         "confidence": float(inv.extraction_confidence) if inv.extraction_confidence is not None else None,
     }
-    direction, direction_certain = _invoice_direction(inv, company)
-    counterparty_name = inv.seller_name if direction == "purchase" else inv.buyer_name
-    counterparty_tax_code = inv.seller_tax_code if direction == "purchase" else inv.buyer_tax_code
-    return {
-        "stt": index,
-        "id": inv.id,
-        "direction": direction,
-        "direction_certain": direction_certain,
-        "invoice_date": inv.invoice_date.date().isoformat() if inv.invoice_date else None,
-        "invoice_series": inv.invoice_series,
-        "invoice_number": inv.invoice_number,
-        "counterparty_name": counterparty_name,
-        "counterparty_tax_code": counterparty_tax_code,
-        "seller_name": inv.seller_name,
-        "seller_tax_code": inv.seller_tax_code,
-        "buyer_name": inv.buyer_name,
-        "buyer_tax_code": inv.buyer_tax_code,
-        "subtotal_amount": int(inv.subtotal_amount or 0),
-        "vat_rate": float(str(inv.vat_rate.value) or "10") / 100,
-        "vat_amount": int(inv.vat_amount or 0),
-        "total_amount": int(inv.total_amount or 0),
-        "einvoice_verified": inv.einvoice_verified,
-        "confidence": float(inv.extraction_confidence) if inv.extraction_confidence is not None else None,
-    }
 
 
 def _aggregate_cit_bases(journal_entries: list[JournalEntry]) -> tuple[int, int, int, int]:
@@ -683,7 +659,7 @@ def _build_vat_declaration_summary(
 
     for invoice in invoices:
         direction, _ = _invoice_direction(invoice, company)
-        rate = invoice.vat_rate.value if hasattr(invoice.vat_rate, "value") else str(invoice.vat_rate)
+        rate = getattr(invoice.vat_rate, "value", None) or (str(invoice.vat_rate) if invoice.vat_rate is not None else None)
         bucket = by_rate.setdefault(rate, {"rate": rate, "input_amount": 0, "output_amount": 0, "input_vat": 0, "output_vat": 0})
         subtotal_amount = int(invoice.subtotal_amount or 0)
         vat_amount = int(invoice.vat_amount or 0)

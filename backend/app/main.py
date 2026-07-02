@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 import uuid
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
@@ -195,8 +195,12 @@ async def healthz():
     }
 
 
+# M-6: require authentication on /debug/db
+from app.api.routes.auth import get_current_user  # noqa: F401, E402
+
+
 @app.get("/debug/db")
-async def debug_db():
+async def debug_db(current_user=Depends(get_current_user)):
     """
     TEMPORARY: returns DB state snapshot for deployment verification.
     Lists tables, Alembic version, and sample row counts.

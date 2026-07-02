@@ -9,6 +9,7 @@ Security notes:
 - R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY must never be committed to source
   control or baked into Docker images — always load from secrets/env vars.
 """
+import re
 import uuid
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -51,7 +52,11 @@ class R2Service:
 
     async def upload(self, content: bytes, filename: str, mime_type: str, folder: str = "") -> str:
         """Upload file to R2, return internal R2 path for signed-URL retrieval."""
-        key = f"{folder}/{uuid.uuid4()}_{filename}".lstrip("/")
+        # L-1: Sanitize filename — strip path traversal (../ etc.) and keep only
+        # safe chars (alphanumeric, dash, underscore, dot). Preserve extension.
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", filename.split("/")[-1].split("\\")[-1])
+        safe_name = safe_name or "uploaded-document"
+        key = f"{folder}/{uuid.uuid4()}_{safe_name}".lstrip("/")
         if self.use_local:
             path = self.local_root / key
             path.parent.mkdir(parents=True, exist_ok=True)
