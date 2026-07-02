@@ -55,32 +55,61 @@ def send_email_task(self, to_email: str, reset_token: str):
 
 @celery_app.task(bind=True, name="verify-einvoice-async", max_retries=5, default_retry_delay=60)
 def verify_einvoice_async(self, invoice_id: str):
-    """Background re-verification of an invoice against the GDT portal."""
-    import sys
-    sys.path.insert(0, "/Users/gilbertneo/Desktop/My Apps/Vietnam Accounting App/vn-accounting/backend")
-    from app.core.database import SessionLocal
+    """Background re-verification of an invoice against the GDT portal.
+
+    B-1 fix: uses AsyncSessionLocal (same pattern as _process_document_async),
+    no hardcoded filesystem paths, runs correctly in Docker.
+    """
+    return _run_verify_einvoice_async(self, invoice_id)
+
+
+def _run_verify_einvoice_async(task, invoice_id: str):
+    """Sync wrapper — Celery calls this; runs the async logic in a new event loop."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_verify_einvoice_async_inner(task, invoice_id))
+    finally:
+        loop.close()
+
+
+async def _verify_einvoice_async_inner(task, invoice_id: str):
+    """Async implementation — uses AsyncSessionLocal, no hardcoded paths."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.config import get_settings
     from app.models import Invoice
     from app.services.einvoice import GDTInvoiceVerificationService
-    from datetime import UTC, datetime
 
-    db = SessionLocal()
-    try:
-        inv = db.get(Invoice, invoice_id)
-        if not inv:
-            return {"status": "error", "invoice_id": invoice_id}
-        gdt = GDTInvoiceVerificationService()
-        result = gdt.verify_invoice(inv)
-        inv.einvoice_verified = result.get("verified", False)
-        inv.einvoice_verified_at = datetime.now(UTC)
-        inv.einvoice_verification_data = result
-        db.commit()
-        return {"status": "ok", "invoice_id": invoice_id}
-    except Exception as exc:
-        db.rollback()
-        countdown = 60 * (self.request.retries + 1)
-        raise self.retry(exc=exc, countdown=countdown)
-    finally:
-        db.close()
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True, echo=False)
+    AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
+            inv = result.scalar_one_or_none()
+            if not inv:
+                return {"status": "error", "invoice_id": invoice_id}
+
+            # H-1 fix: pass primitive arguments, not the ORM object
+            gdt = GDTInvoiceVerificationService()
+            result = await gdt.verify_invoice(
+                invoice_series=inv.invoice_series,
+                invoice_number=inv.invoice_number,
+                tax_code=inv.seller_tax_code or inv.buyer_tax_code,
+            )
+
+            inv.einvoice_verified = result.get("verified", False)
+            inv.einvoice_verified_at = datetime.now(UTC)
+            inv.einvoice_verification_data = result
+            await db.commit()
+            return {"status": "ok", "invoice_id": invoice_id}
+
+        except Exception as exc:
+            await db.rollback()
+            countdown = 60 * (task.request.retries + 1)
+            raise task.retry(exc=exc, countdown=countdown)
 
 
 async def process_document_now(document_id: str):

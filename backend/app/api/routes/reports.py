@@ -147,18 +147,40 @@ def _build_annexes(invoices: list[Invoice], company: Company) -> tuple[dict, dic
 
     for index, invoice in enumerate(invoices, start=1):
         row = _invoice_report_row(index, invoice, company)
+        # M-2: direction_needs_review invoices are shown in annex but NOT included in VAT totals
+        # to prevent uncertain classification from silently affecting tax filing
         if row["direction"] == "purchase":
             purchase_items.append(row)
-            purchase_totals["count"] += 1
-            purchase_totals["taxable_value"] += row["subtotal_amount"]
-            purchase_totals["vat_amount"] += row["vat_amount"]
-            purchase_totals["total_amount"] += row["total_amount"]
+            if not row["direction_needs_review"]:
+                purchase_totals["count"] += 1
+                purchase_totals["taxable_value"] += row["subtotal_amount"]
+                purchase_totals["vat_amount"] += row["vat_amount"]
+                purchase_totals["total_amount"] += row["total_amount"]
         else:
             sales_items.append(row)
-            sales_totals["count"] += 1
-            sales_totals["taxable_value"] += row["subtotal_amount"]
-            sales_totals["vat_amount"] += row["vat_amount"]
-            sales_totals["total_amount"] += row["total_amount"]
+            if not row["direction_needs_review"]:
+                sales_totals["count"] += 1
+                sales_totals["taxable_value"] += row["subtotal_amount"]
+                sales_totals["vat_amount"] += row["vat_amount"]
+                sales_totals["total_amount"] += row["total_amount"]
+
+    purchase_unconfirmed = sum(1 for r in purchase_items if r["direction_needs_review"])
+    sales_unconfirmed = sum(1 for r in sales_items if r["direction_needs_review"])
+
+    purchase_warnings = []
+    if purchase_unconfirmed > 0:
+        purchase_warnings.append({
+            "type": "direction_unconfirmed",
+            "count": purchase_unconfirmed,
+            "message": f"{purchase_unconfirmed} invoice(s) excluded from totals — direction unconfirmed.",
+        })
+    sales_warnings = []
+    if sales_unconfirmed > 0:
+        sales_warnings.append({
+            "type": "direction_unconfirmed",
+            "count": sales_unconfirmed,
+            "message": f"{sales_unconfirmed} invoice(s) excluded from totals — direction unconfirmed.",
+        })
 
     return (
         {
@@ -166,14 +188,14 @@ def _build_annexes(invoices: list[Invoice], company: Company) -> tuple[dict, dic
             "title": "Phu luc bang ke hoa don mua vao",
             "items": purchase_items,
             "totals": purchase_totals,
-            "warnings": [],
+            "warnings": purchase_warnings,
         },
         {
             "code": "01-2/GTGT",
             "title": "Phu luc bang ke hoa don ban ra",
             "items": sales_items,
             "totals": sales_totals,
-            "warnings": [],
+            "warnings": sales_warnings,
         },
     )
 
@@ -660,7 +682,11 @@ def _build_vat_declaration_summary(
     if not validate_mst(company.tax_code):
         validation_issues.append("Company MST failed checksum validation.")
 
-    for invoice in invoices:
+    # M-2: Exclude direction-uncertain invoices from VAT filing totals
+    # Annexes show ALL invoices (with needs_review flag); totals use confirmed only
+    confirmed_invoices = [inv for inv in invoices if _invoice_direction(inv, company)[1]]
+
+    for invoice in confirmed_invoices:
         direction, _ = _invoice_direction(invoice, company)
         rate = getattr(invoice.vat_rate, "value", None) or (str(invoice.vat_rate) if invoice.vat_rate is not None else None)
         bucket = by_rate.setdefault(rate, {"rate": rate, "input_amount": 0, "output_amount": 0, "input_vat": 0, "output_vat": 0})
@@ -768,13 +794,14 @@ def _build_vat_declaration_summary(
         if issue:
             warnings.append({"type": issue.type, "message": issue.message, "invoice_ids": issue.invoice_ids})
 
-    # H-5: track unconfirmed direction count and append warning
+    # M-2: track unconfirmed direction count
+    # Annex warnings handle the per-side breakdown; this is the overall summary alert
     unconfirmed = sum(1 for inv in invoices if not _invoice_direction(inv, company)[1])
     if unconfirmed > 0:
         warnings.append({
             "type": "direction_unconfirmed",
             "count": unconfirmed,
-            "message": f"{unconfirmed} invoice(s) have unconfirmed direction. Please review before filing."
+            "message": f"{unconfirmed} invoice(s) excluded from VAT totals — direction unconfirmed. Annexes show all invoices; review flagged ones before filing."
         })
 
     return {
@@ -785,7 +812,8 @@ def _build_vat_declaration_summary(
         "output_vat_total": field_35,
         "net_vat": field_40 if field_40 > 0 else -field_43,
         "vat_by_rate": vat_by_rate_dict,
-        "invoice_count": len(invoices),
+        "invoice_count": len(confirmed_invoices),
+        "invoice_count_total": len(invoices),
         "filing_deadline": get_vat_declaration_deadline(year, period, period_type),
         "warnings": warnings,
         "generated_at": datetime.now(UTC).isoformat(),

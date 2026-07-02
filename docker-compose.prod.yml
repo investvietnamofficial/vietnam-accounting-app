@@ -19,7 +19,7 @@ services:
     restart: always
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}"]  # L-4: password auth (empty default)
     healthcheck:
-      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      test: ["CMD-SHELL", "sh", "-c", "redis-cli ${REDIS_PASSWORD:+-a $REDIS_PASSWORD} ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -61,7 +61,11 @@ services:
     volumes:
       - backend_storage:/app/storage
     command: >
-      sh -c "alembic -c alembic.ini upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      sh -c "
+      if [ -n \"$REDIS_PASSWORD\" ]; then
+        export REDIS_URL=\"redis://:${REDIS_PASSWORD}@redis:6379/0\"
+      fi
+      alembic -c alembic.ini upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   worker:
     image: vn-accounting-worker:latest
@@ -93,7 +97,7 @@ services:
     volumes:
       - backend_storage:/app/storage
     command: >
-      sh -c "exec celery -A app.workers.celery_app worker --loglevel=info -Q celery,ocr --concurrency=4 --max-tasks-per-child=100"
+      sh -c "if [ -n \"$REDIS_PASSWORD\" ]; then export REDIS_URL=\"redis://:${REDIS_PASSWORD}@redis:6379/0\"; fi && exec celery -A app.workers.celery_app worker --loglevel=info -Q celery,ocr --concurrency=4 --max-tasks-per-child=100"
 
   web:
     image: vn-accounting-web:latest
