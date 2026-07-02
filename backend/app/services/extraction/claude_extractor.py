@@ -346,6 +346,9 @@ class ExtractionService:
             )
             data["confidence"] = min(float(data.get("confidence", 0.5)), 0.5)
 
+        # M-8: always include currency_code in result, defaulting to VND
+        data["currency_code"] = data.get("currency_code", "VND")
+
         return data
 
     def _empty_result(self) -> dict[str, Any]:
@@ -505,31 +508,93 @@ class ExtractionService:
         return folded
 
     def _normalize_amount_string(self, value: str) -> int | None:
-        """
-        Normalize a numeric string to an integer VND.
-
-        Handles:
-        - Vietnamese format: "1.500.000" = 1500000 (dot = thousand separator)
-        - European format: "1,500,000.50" = 1500000 (comma = decimal, dot = thousand)
-        - Plain: "1500000" = 1500000
-        - Decimal comma: "1.500.000,50" → 1500000 (truncate at decimal, Vietnamese)
-
-        Strategy: if comma present, treat as decimal separator and truncate fractional part.
-        Otherwise strip all non-digit characters and parse as integer.
-        """
-        value = value.strip()
+        """Normalize a numeric string to an integer VND amount."""
+        import re
         if not value:
             return None
-
-        # If comma is present, it is the decimal separator in European/Vietnamese format
-        if "," in value:
-            # Truncate at the decimal comma (Vietnamese accounting: round down)
-            integer_part = value.split(",")[0]
-            digits = re.sub(r"[^\d]", "", integer_part)
-        else:
+        value = str(value).strip()
+        value = value.replace("\u00a0", " ").replace("\u200b", "")
+        value = re.sub(r"[$₫€£¥]", "", value, flags=re.IGNORECASE).strip()
+        value = value.rstrip(".-")
+        negative = value.startswith("-")
+        value = value.lstrip("-+")
+        has_comma = "," in value
+        has_dot = "." in value
+        if not has_comma and not has_dot:
             digits = re.sub(r"[^\d]", "", value)
+            result = int(digits) if digits else None
+            return -result if result and negative else result
+        dot_groups = value.split(".")
+        is_vietnamese_dot = has_dot and len(dot_groups) > 1 and all(len(g) == 3 for g in dot_groups[:-1])
+        if has_comma:
+            ci = value.rindex(",")
+            after_c = value[ci+1:]
+            before_c = value[:ci]
+            after_c_has_dot = "." in after_c
 
-        return int(digits) if digits else None
+            if is_vietnamese_dot or (has_dot and not after_c_has_dot and len(after_c) <= 2):
+                # Comma is thousands separator; extract pure integer (no decimal)
+                digits = re.sub(r"[^\d]", "", before_c)
+                result = int(digits) if digits else None
+                return -result if result and negative else result
+
+            elif after_c_has_dot:
+                # Comma is thousands separator (dot is decimal).
+                # before_c contains the full integer (possibly with commas or spaces).
+                # after_c = "500.50" → integer=500, decimal=50.
+                int_digits = re.sub(r"[^\d]", "", before_c)
+                dot_idx_in_after = after_c.index(".")
+                int_after_c = after_c[:dot_idx_in_after]
+                dec_after_c = after_c[dot_idx_in_after + 1:]
+                # integer = int_digits * 1000 + int_after_c; decimal = dec_after_c
+                # Use Decimal to avoid float locale issues: "1500.50" → 1500.50
+                int_part = int(int_digits) * 1000 + int(int_after_c)
+                from decimal import Decimal
+                result = int(Decimal(f"{int_part}.{dec_after_c}") + Decimal("0"))
+                return -result if negative else result
+
+            elif not has_dot and re.fullmatch(r"\d+", after_c):
+                # No dot in the entire string → comma cannot be decimal; treat as thousands.
+                # "2,500,000" → all digits after last comma → thousands separator.
+                digits = re.sub(r"[^\d]", "", value)
+                result = int(digits) if digits else None
+                return -result if result and negative else result
+
+            else:
+                # Comma is decimal separator (European: "1.500,50").
+                # Strip all dots from integer, keep after_c as decimal.
+                int_digits = re.sub(r"[^\d]", "", before_c)
+                from decimal import Decimal
+                result = int(Decimal(f"{int_digits}.{after_c}") + Decimal("0"))
+                return -result if negative else result
+        elif is_vietnamese_dot:
+            digits = re.sub(r"[^\d]", "", value)
+            result = int(digits) if digits else None
+            return -result if result and negative else result
+        else:
+            # No comma: dot is either decimal or single-group Vietnamese thousands.
+            # "1.500" → 1500 (single group of exactly 3 digits = thousands separator).
+            # "1.500.000" → handled above by is_vietnamese_dot.
+            if has_dot:
+                dot_groups = value.split(".")
+                if len(dot_groups) == 2 and re.fullmatch(r"\d{1,3}", dot_groups[0]) and re.fullmatch(r"\d{3}", dot_groups[1]):
+                    # "1.500" → 1500, "12.500" → 12500
+                    digits = re.sub(r"[^\d]", "", value)
+                    result = int(digits) if digits else None
+                    return -result if result and negative else result
+            try:
+                from decimal import Decimal
+                result = int(Decimal(value) + Decimal("0"))
+            except Exception:
+                # Locale/space issues with float/Decimal: strip all non-digit chars
+                # except the dot (keep dot as decimal separator), then parse.
+                digits = re.sub(r"[^\d.]", "", value)
+                try:
+                    result = round(float(digits))
+                except Exception:
+                    digits2 = re.sub(r"[^\d]", "", value)
+                    result = int(digits2) if digits2 else None
+            return -result if result and negative else result
 
     def _score_regex_result(
         self,
