@@ -423,18 +423,28 @@ def _is_placeholder(value: str) -> bool:
 
 
 def _build_credentials_from_dict(creds_dict: dict):
-    """Build a google.auth.credentials.Credentials from a dict."""
-    import tempfile, os
+    """Build google-auth credentials directly from a dict — no tempfile needed.
 
-    # Write dict to a temp file so google-auth can read it
-    fd, path = tempfile.mkstemp(suffix=".json")
+    The google-auth SDK supports from_service_account_info() natively,
+    eliminating the tempfile security risk.
+    """
     try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(creds_dict, f)
-        return _credentials_from_file(path)
-    except Exception:
-        os.unlink(path)
-        raise
+        from google.oauth2 import service_account
+        return service_account.Credentials.from_service_account_info(creds_dict)
+    except ImportError:
+        # Fallback: use tempfile for environments without google-auth
+        import tempfile, os
+        fd, path = tempfile.mkstemp(suffix=".json")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(creds_dict, f)
+            creds = _credentials_from_file(path)
+            os.unlink(path)  # clean up after successful load
+            return creds
+        except Exception:
+            if os.path.exists(path):
+                os.unlink(path)
+            raise
 
 
 def _credentials_from_file(path: str):

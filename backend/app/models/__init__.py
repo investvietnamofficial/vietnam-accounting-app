@@ -222,6 +222,7 @@ class Invoice(TimestampMixin, Base):
     buyer_address: Mapped[str | None] = mapped_column(Text)
 
     # Amounts (in VND, no decimal)
+    currency_code: Mapped[str] = mapped_column(String(3), default="VND")  # ISO 4217; VND is default; non-VND invoices must be converted
     subtotal_amount: Mapped[int] = mapped_column(BigInteger, default=0)    # Cộng tiền hàng
     vat_rate: Mapped[VATRate] = mapped_column(
         Enum(VATRate, values_callable=lambda x: [e.value for e in x]),

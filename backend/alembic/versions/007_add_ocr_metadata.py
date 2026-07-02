@@ -1,7 +1,7 @@
 """Add OCR metadata columns for production observability.
 
 Revision ID: 007_add_ocr_metadata
-Revises: 006_fix_alembic_version_coltype
+Revises: 005_add_indexes
 Create Date: 2026-07-01
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "007_add_ocr_metadata"
-down_revision = "006_fix_alembic_version_coltype"
+down_revision = "005_add_indexes"
 branch_labels = None
 depends_on = None
 

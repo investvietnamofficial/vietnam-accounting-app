@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Literal, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select, or_
+from sqlalchemy import func, literal, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -30,6 +30,28 @@ async def list_invoices(
     db: AsyncSession = Depends(get_db),
 ):
     """List invoices with optional filters for date range, VAT rate, seller/buyer name, verification status, and direction."""
+    # Get company tax_code early — needed for direction filter
+    from app.models import Company
+    co_result = await db.execute(select(Company.tax_code).where(Company.id == current_user.company_id))
+    company_tax_code = co_result.scalar_one_or_none()
+
+    # Build direction filter in SQL (normalized seller_tax_code vs company tax_code)
+    # sale = seller_tax_code matches company_tax_code; purchase = otherwise
+    direction_clause = None
+    if invoice_type and company_tax_code:
+        # Normalize both in SQL: replace hyphens and spaces
+        norm_company = func.replace(func.replace(func.replace(
+            literal(company_tax_code), literal("-"), literal("")),
+            literal(" "), literal("")),
+            literal("\n"), literal(""))
+        norm_seller = func.replace(func.replace(func.replace(
+            Invoice.seller_tax_code, literal("-"), literal("")),
+            literal(" "), literal("")),
+            literal("\n"), literal(""))
+        is_sale = norm_seller == norm_company
+        direction_clause = is_sale if invoice_type == "sales" else (~is_sale)
+
+    # Build base query with all filters
     query = select(Invoice).where(Invoice.company_id == current_user.company_id)
 
     # Date range filters
@@ -67,21 +89,12 @@ async def list_invoices(
     elif verification_status == "pending":
         query = query.where(or_(Invoice.einvoice_verified == False, Invoice.einvoice_verified.is_(None)))
 
-    # Invoice direction (purchase vs sales)
-    if invoice_type:
-        # We determine direction by comparing company tax_code with seller_tax_code
-        # Purchase: seller is external (not the company itself)
-        # Sales: buyer is external
-        # Since we need company tax_code, we'll do this in Python post-fetch
-        # or use a subquery. For simplicity, we'll use a raw SQL approach via func.lower
-        # Actually let's just add a column note: invoice_type param is "sales" or "purchase"
-        # We can't easily determine this without company tax_code in the filter,
-        # so we leave it for future enhancement with a note
-        pass
+    # Invoice direction (SQL-level — applied BEFORE pagination)
+    if direction_clause is not None:
+        query = query.where(direction_clause)
 
-    # Count query
+    # Count query — apply same filters including direction
     count_query = select(func.count()).select_from(Invoice).where(Invoice.company_id == current_user.company_id)
-    # Re-apply filters to count query
     if date_from:
         count_query = count_query.where(Invoice.invoice_date >= datetime.strptime(date_from, "%Y-%m-%d"))
     if date_to:
@@ -97,30 +110,16 @@ async def list_invoices(
         count_query = count_query.where(Invoice.einvoice_verified == True)
     elif verification_status == "pending":
         count_query = count_query.where(or_(Invoice.einvoice_verified == False, Invoice.einvoice_verified.is_(None)))
+    if direction_clause is not None:
+        count_query = count_query.where(direction_clause)
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
 
-    # Main query with pagination
+    # Main query with pagination (direction filter already applied)
     query = query.order_by(Invoice.invoice_date.desc()).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(query)
     invoices = result.scalars().all()
-
-    # Post-fetch invoice direction filter (requires company tax_code lookup)
-    if invoice_type:
-        company_result = await db.execute(select(Invoice.company_id).where(Invoice.company_id == current_user.company_id))
-        # Get company tax_code via a separate query if needed
-        from app.models import Company
-        co_result = await db.execute(select(Company.tax_code).where(Company.id == current_user.company_id))
-        company_tax_code = co_result.scalar_one_or_none()
-        if company_tax_code:
-            def _direction(inv: Invoice) -> str:
-                seller_norm = (inv.seller_tax_code or "").replace("-", "").replace(" ", "")
-                if seller_norm == company_tax_code.replace("-", "").replace(" ", ""):
-                    return "sales"
-                return "purchase"
-            invoices = [inv for inv in invoices if _direction(inv) == invoice_type]
-        total = len(invoices)
 
     return {
         "items": [_invoice_dict(inv) for inv in invoices],
@@ -181,6 +180,7 @@ def _invoice_dict(inv: Invoice) -> dict:
         "invoice_number": inv.invoice_number,
         "invoice_date": inv.invoice_date,
         "invoice_type": inv.invoice_type,
+        "currency_code": getattr(inv, "currency_code", "VND"),
         "seller_name": inv.seller_name,
         "seller_tax_code": inv.seller_tax_code,
         "seller_address": inv.seller_address,

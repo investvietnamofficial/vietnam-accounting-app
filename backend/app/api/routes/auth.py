@@ -83,11 +83,30 @@ async def login(
 
 
 @router.post("/token/refresh", response_model=AuthTokenResponse)
-async def refresh_token(payload: TokenRefreshRequest):
+async def refresh_token(
+    payload: TokenRefreshRequest,
+    db: AsyncSession = Depends(get_db),
+):
     decoded = decode_token(payload.refresh_token)
     if decoded.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
-    return {"access_token": create_access_token(decoded["sub"]), "token_type": "bearer"}
+
+    # Re-validate user exists and is active — prevents deactivated users from
+    # continuing to mint access tokens via a stolen refresh token
+    user_id = decoded["sub"]
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive — please log in again",
+        )
+
+    return {
+        "access_token": create_access_token(user.id),
+        "refresh_token": create_refresh_token(user.id),  # rotate refresh token on each use
+        "token_type": "bearer",
+    }
 
 
 @router.get("/me", response_model=UserSummary)

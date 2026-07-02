@@ -108,12 +108,29 @@ async def _ytd_posted_journal_entries(
     return result.scalars().all()
 
 
-def _invoice_direction(inv: Invoice, company: Company) -> str:
+def _invoice_direction(inv: Invoice, company: Company) -> tuple[str, bool]:
+    """
+    Determine invoice direction and whether the classification is certain.
+
+    Returns (direction, is_certain):
+    - "sale" if company is the seller (seller_tax_code == company_tax_code)
+    - "purchase" otherwise (company is the buyer, or direction is ambiguous)
+    - is_certain=False when seller_tax_code is missing/null (possible misread)
+    """
     company_tax_code = normalize_tax_code(company.tax_code)
     seller_tax_code = normalize_tax_code(inv.seller_tax_code)
-    if company_tax_code and seller_tax_code == company_tax_code:
-        return "sale"
-    return "purchase"
+
+    if not company_tax_code:
+        return "purchase", False
+
+    if seller_tax_code and seller_tax_code == company_tax_code:
+        return "sale", True
+
+    if seller_tax_code:
+        return "purchase", True
+
+    # No seller_tax_code — uncertain (could be a sales invoice with misread MST)
+    return "purchase", False
 
 
 def _period_label(period_type: str, period: int, year: int) -> str:
@@ -159,13 +176,52 @@ def _build_annexes(invoices: list[Invoice], company: Company) -> tuple[dict, dic
     )
 
 
+def _vat_rate_float(vat_rate) -> float | None:
+    """Safely convert a VATRate enum or string to a float percentage."""
+    if vat_rate is None:
+        return None
+    raw = str(vat_rate.value if hasattr(vat_rate, "value") else vat_rate)
+    if raw in ("exempt", "na", "not_applicable"):
+        return None
+    try:
+        return float(raw) / 100
+    except (ValueError, TypeError):
+        return None
+
+
 def _invoice_report_row(index: int, inv: Invoice, company: Company) -> dict:
-    counterparty_name = inv.seller_name if _invoice_direction(inv, company) == "purchase" else inv.buyer_name
-    counterparty_tax_code = inv.seller_tax_code if _invoice_direction(inv, company) == "purchase" else inv.buyer_tax_code
+    direction, direction_certain = _invoice_direction(inv, company)
+    counterparty_name = inv.seller_name if direction == "purchase" else inv.buyer_name
+    counterparty_tax_code = inv.seller_tax_code if direction == "purchase" else inv.buyer_tax_code
     return {
         "stt": index,
         "id": inv.id,
-        "direction": _invoice_direction(inv, company),
+        "direction": direction,
+        "direction_certain": direction_certain,
+        "invoice_date": inv.invoice_date.date().isoformat() if inv.invoice_date else None,
+        "invoice_series": inv.invoice_series,
+        "invoice_number": inv.invoice_number,
+        "counterparty_name": counterparty_name,
+        "counterparty_tax_code": counterparty_tax_code,
+        "seller_name": inv.seller_name,
+        "seller_tax_code": inv.seller_tax_code,
+        "buyer_name": inv.buyer_name,
+        "buyer_tax_code": inv.buyer_tax_code,
+        "subtotal_amount": int(inv.subtotal_amount or 0),
+        "vat_rate": _vat_rate_float(inv.vat_rate),
+        "vat_amount": int(inv.vat_amount or 0),
+        "total_amount": int(inv.total_amount or 0),
+        "einvoice_verified": inv.einvoice_verified,
+        "confidence": float(inv.extraction_confidence) if inv.extraction_confidence is not None else None,
+    }
+    direction, direction_certain = _invoice_direction(inv, company)
+    counterparty_name = inv.seller_name if direction == "purchase" else inv.buyer_name
+    counterparty_tax_code = inv.seller_tax_code if direction == "purchase" else inv.buyer_tax_code
+    return {
+        "stt": index,
+        "id": inv.id,
+        "direction": direction,
+        "direction_certain": direction_certain,
         "invoice_date": inv.invoice_date.date().isoformat() if inv.invoice_date else None,
         "invoice_series": inv.invoice_series,
         "invoice_number": inv.invoice_number,
@@ -201,7 +257,13 @@ def _aggregate_cit_bases(journal_entries: list[JournalEntry]) -> tuple[int, int,
                     other_income += amount
             if line.debit_account_code:
                 debit_code = str(line.debit_account_code)
-                if debit_code.startswith(("632", "635", "641", "642")) or debit_code.startswith("6"):
+                # Only these specific 6xx accounts are deductible operating expenses:
+                # 632: Cost of goods sold
+                # 635: Direct labor / manufacturing costs
+                # 641: Indirect costs (manufacturing overhead)
+                # 642: General and administrative expenses
+                # Do NOT sweep in 6xx capital/asset accounts (661, 662, 621, 622, etc.)
+                if debit_code in {"632", "635", "641", "642"}:
                     deductible_expenses += amount
                 elif debit_code.startswith("811"):
                     other_expenses += amount
@@ -219,7 +281,7 @@ def _invoice_list_payload(
 ) -> dict:
     """Build invoice list for sales/purchase report endpoints."""
     if direction_filter:
-        invoices = [inv for inv in invoices if _invoice_direction(inv, company) == direction_filter]
+        invoices = [inv for inv in invoices if _invoice_direction(inv, company)[0] == direction_filter]
 
     items = []
     for idx, inv in enumerate(invoices, start=1):
@@ -232,7 +294,7 @@ def _invoice_list_payload(
             "buyer_name": inv.buyer_name,
             "buyer_tax_code": inv.buyer_tax_code,
             "subtotal": int(inv.subtotal_amount or 0),
-            "vat_rate": float(str(inv.vat_rate.value) or "10") / 100,
+        "vat_rate": _vat_rate_float(inv.vat_rate),
             "vat_amount": int(inv.vat_amount or 0),
             "total": int(inv.total_amount or 0),
             "confidence": float(inv.extraction_confidence) if inv.extraction_confidence is not None else None,
@@ -620,7 +682,7 @@ def _build_vat_declaration_summary(
         validation_issues.append("Company MST failed checksum validation.")
 
     for invoice in invoices:
-        direction = _invoice_direction(invoice, company)
+        direction, _ = _invoice_direction(invoice, company)
         rate = invoice.vat_rate.value if hasattr(invoice.vat_rate, "value") else str(invoice.vat_rate)
         bucket = by_rate.setdefault(rate, {"rate": rate, "input_amount": 0, "output_amount": 0, "input_vat": 0, "output_vat": 0})
         subtotal_amount = int(invoice.subtotal_amount or 0)

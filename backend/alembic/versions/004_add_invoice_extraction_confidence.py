@@ -5,7 +5,7 @@ import sqlalchemy as sa
 
 
 revision = "004_add_invoice_extraction_confidence"
-down_revision = "003_add_company_settings"
+down_revision = "003b_fix_alembic_version_coltype"
 branch_labels = None
 depends_on = None
 

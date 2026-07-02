@@ -73,7 +73,9 @@ def test_merge_with_regex_fallback_recovers_missing_fields():
 
 
 def test_ocr_preprocess_candidates_produces_multiple_variants():
-    service = OCRService()
+    from app.services.ocr.vision_service import PaddleOCRProvider
+    from app.core.config import get_settings
+    service = PaddleOCRProvider(settings=get_settings())
     from PIL import Image
     import io
 

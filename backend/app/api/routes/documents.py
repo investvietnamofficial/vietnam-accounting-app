@@ -83,7 +83,17 @@ async def upload_document(
         }
 
     r2 = R2Service()
-    filename = file.filename or "uploaded-document"
+    # Sanitize filename: remove path traversal components and non-printable chars.
+    # The UUID prefix in the storage key prevents collisions regardless.
+    original_filename = file.filename or "uploaded-document"
+    try:
+        from werkzeug.utils import secure_filename
+        filename = secure_filename(original_filename) or "uploaded-document"
+    except Exception:
+        # Fallback: strip path components manually
+        import re
+        filename = re.sub(r"[^a-zA-Z0-9._-]", "_", original_filename.split("/")[-1].split("\\")[-1])
+        filename = filename or "uploaded-document"
     file_url = await r2.upload(
         content=content,
         filename=filename,
@@ -231,15 +241,34 @@ async def _dispatch_processing(doc: Document, background_tasks: BackgroundTasks)
 
 
 def _detect_mime_type(content: bytes) -> str:
+    """
+    Detect MIME type using libmagic (python-magic) if available.
+    Falls back to magic-byte inspection (pure Python) if not installed.
+    """
     try:
         import magic
+        detected = magic.from_buffer(content, mime=True)
+        if detected == "image/jpg":
+            return "image/jpeg"
+        return detected
     except ImportError:
-        return "application/octet-stream"
+        pass
 
-    detected = magic.from_buffer(content, mime=True)
-    if detected == "image/jpg":
+    # Fallback: pure-Python magic-byte inspection
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    return detected
+    if content.startswith(b"%PDF"):
+        return "application/pdf"
+    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return "image/webp"
+    if content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
+        return "image/gif"
+    if content.startswith(b"\x00\x00\x01\x00"):  # ICO
+        return "image/x-icon"
+    # No magic bytes matched
+    return "application/octet-stream"
 
 
 def _document_payload(doc: Document) -> dict:

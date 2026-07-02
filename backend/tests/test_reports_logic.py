@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from app.api.routes.reports import _aggregate_cit_bases, _build_vat_declaration_summary
+from app.api.routes.reports import _aggregate_cit_bases, _build_vat_declaration_summary, _vat_rate_float, _invoice_direction
 from app.models import Company, Invoice, JournalEntry, JournalEntryLine, JournalEntryStatus, VATRate
 
 
@@ -38,6 +38,7 @@ def _invoice(
         invoice_series="AA/26E",
         invoice_number=invoice_id[-3:],
         invoice_type="invoice_vat",
+        currency_code="VND",
         seller_name="Seller" if direction == "purchase" else company.name,
         seller_tax_code=seller_tax_code,
         buyer_name="Buyer" if direction == "sale" else company.name,
@@ -113,6 +114,46 @@ def test_aggregate_cit_bases_uses_posted_journal_lines():
     revenue, deductible_expenses, other_income, other_expenses = _aggregate_cit_bases([entry])
 
     assert revenue == 1_000_000_000
-    assert deductible_expenses == 700_000_000
+    # 632 is deductible; 6421 is a sub-account (not in the explicit deductible list)
+    # and is NOT swept by the catch-all — only the four specific codes are deductible
+    assert deductible_expenses == 600_000_000
     assert other_income == 50_000_000
     assert other_expenses == 20_000_000
+
+
+def test_vat_rate_float_handles_exempt_and_na():
+    # Regression: exempt/NA VAT rates must not raise; they return None
+    assert _vat_rate_float(VATRate.EXEMPT) is None
+    assert _vat_rate_float(VATRate.NOT_APPLICABLE) is None
+    # Standard rates convert to float fractions
+    assert _vat_rate_float(VATRate.TEN) == 0.1
+    assert _vat_rate_float(VATRate.FIVE) == 0.05
+    assert _vat_rate_float(VATRate.EIGHT) == 0.08
+
+
+def test_invoice_direction_uncertain_when_seller_mst_missing():
+    # When seller_tax_code is None the direction is still determined as
+    # "purchase" but is_certain=False (possible misread MST on a sales invoice)
+    company = _company()
+    inv_no_seller = Invoice(
+        id="inv-no-seller",
+        company_id=company.id,
+        document_id="doc-no-seller",
+        invoice_date=datetime(2026, 3, 15, tzinfo=UTC),
+        invoice_series="AA/26E",
+        invoice_number="001",
+        invoice_type="invoice_vat",
+        currency_code="VND",
+        seller_name="Some Supplier",
+        seller_tax_code=None,  # missing MST — uncertainty case
+        buyer_name=company.name,
+        buyer_tax_code=company.tax_code,
+        subtotal_amount=10_000_000,
+        vat_rate=VATRate.TEN,
+        vat_amount=1_000_000,
+        total_amount=11_000_000,
+        einvoice_verified=False,
+    )
+    direction, is_certain = _invoice_direction(inv_no_seller, company)
+    assert direction == "purchase"
+    assert is_certain is False

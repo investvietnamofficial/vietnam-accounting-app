@@ -40,15 +40,25 @@ async def process_document_now(document_id: str):
 
 
 async def _process_document_async(task, document_id: str):
+    import asyncio
     from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    from app.core.database import AsyncSessionLocal
+    from app.core.config import get_settings
     from app.models import Document, DocumentStatus, Invoice
     from app.services.einvoice import GDTInvoiceVerificationService
     from app.services.extraction.claude_extractor import ExtractionService
     from app.services.ocr.providers import get_ocr_provider
     from app.services.storage.r2_service import R2Service
 
+    settings = get_settings()
+    engine = create_async_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_size=5,
+        echo=False,
+    )
+    AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Document).where(Document.id == document_id))
         doc = result.scalar_one_or_none()
@@ -73,6 +83,20 @@ async def _process_document_async(task, document_id: str):
 
             r2 = R2Service()
             raw_bytes = await r2.download(doc.file_url)
+
+            # Warn if PDF is very large before OCR
+            if doc.mime_type == "application/pdf":
+                page_count_est = _estimate_pdf_pages(raw_bytes)
+                if page_count_est and page_count_est > MAX_PDF_PAGES:
+                    logger.warning(
+                        "large_pdf_capped",
+                        document_id=document_id,
+                        estimated_pages=page_count_est,
+                        capped_pages=MAX_PDF_PAGES,
+                    )
+                    doc.ocr_warnings = (doc.ocr_warnings or []) + [
+                        f"PDF has ~{page_count_est} pages, only first {MAX_PDF_PAGES} will be processed."
+                    ]
 
             ocr_provider = get_ocr_provider()
             # Use PDF method for PDFs if available, otherwise fall back to image method
@@ -117,6 +141,8 @@ async def _process_document_async(task, document_id: str):
             invoice.invoice_number = extracted.get("invoice_number")
             invoice.invoice_date = _parse_invoice_date(extracted.get("invoice_date"))
             invoice.invoice_type = extracted.get("invoice_type") or doc.doc_type
+            # currency_code: default VND; non-VND is flagged in extraction validation
+            invoice.currency_code = extracted.get("currency_code") or "VND"
             invoice.seller_name = extracted.get("seller_name")
             invoice.seller_tax_code = extracted.get("seller_tax_code")
             invoice.seller_address = extracted.get("seller_address")
@@ -227,7 +253,29 @@ def _should_retry(task) -> bool:
     return current_retries < max_retries
 
 
+MAX_PDF_PAGES = 30  # cap to prevent OOM on large PDFs
+
+
+def _estimate_pdf_pages(content: bytes) -> int | None:
+    """Quick estimate of PDF page count without full rendering."""
+    try:
+        import io
+        try:
+            import PyPDF2
+            reader = PyPDF2.PdfReader(io.BytesIO(content))
+            return len(reader.pages)
+        except ImportError:
+            pass
+        # Fallback: count /Page objects in raw bytes (approximate)
+        import re
+        matches = re.findall(rb"/Type\s*/Page[^s]", content)
+        return len(matches) if matches else None
+    except Exception:
+        return None
+
+
 def _prepare_document_for_ocr(content: bytes, mime_type: str) -> bytes:
+    """Convert document to image bytes for OCR. Processes all PDF pages (capped at MAX_PDF_PAGES)."""
     if mime_type != "application/pdf":
         return content
 
@@ -236,13 +284,17 @@ def _prepare_document_for_ocr(content: bytes, mime_type: str) -> bytes:
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("pdf2image is required to process PDF uploads") from exc
 
-    pages = convert_from_bytes(content, first_page=1, last_page=1, fmt="jpeg")
+    pages = convert_from_bytes(content, first_page=1, last_page=MAX_PDF_PAGES, fmt="jpeg")
     if not pages:
         raise RuntimeError("PDF conversion produced no pages")
 
-    buf = BytesIO()
-    first_page = pages[0]
-    if first_page.mode != "RGB":
-        first_page = first_page.convert("RGB")
-    first_page.save(buf, format="JPEG", quality=95)
-    return buf.getvalue()
+    # Combine all pages into a single byte stream, separated by page markers
+    result = b""
+    for page in pages:
+        if page.mode != "RGB":
+            page = page.convert("RGB")
+        buf = BytesIO()
+        page.save(buf, format="JPEG", quality=85)
+        result += buf.getvalue()
+        result += b"\n--- PAGE BREAK ---\n"
+    return result

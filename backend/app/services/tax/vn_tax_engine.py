@@ -388,8 +388,17 @@ def detect_vat_mismatch(invoices: list["Invoice"]) -> InvoiceIssue | None:
     for inv in invoices:
         subtotal = int(inv.subtotal_amount or 0)
         declared_vat = int(inv.vat_amount or 0)
+        total = int(inv.total_amount or 0)
+
+        # Flag invoices where subtotal and total are both zero — likely failed extraction
+        if subtotal == 0 and total == 0:
+            affected.append(inv.id)
+            continue
+
+        # Skip only if both subtotal AND declared_vat are zero (truly zero-value invoice)
         if subtotal == 0 and declared_vat == 0:
             continue
+
         expected_vat = round_vnd(Decimal(subtotal) * VAT_RATE_MAP.get(inv.vat_rate, Decimal("0")))
         if abs(expected_vat - declared_vat) > 1:
             affected.append(inv.id)

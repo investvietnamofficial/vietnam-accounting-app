@@ -36,9 +36,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
       DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting?sslmode=disable
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-not-for-production}
       LOCAL_STORAGE_DIR: /app/storage
-      USE_CELERY: "false"
+      USE_CELERY: "true"
       PYTHONPATH: /app
     depends_on:
       postgres:
@@ -60,7 +60,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting
       DATABASE_URL_SYNC: postgresql://vn_accounting:vn_accounting_dev@postgres:5432/vn_accounting?sslmode=disable
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-not-for-production}
       PYTHONPATH: /app
     depends_on:
       postgres:
@@ -69,16 +69,21 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import redis; redis.from_url('redis://redis:6379/0').ping()"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     command: >
-      bash -lc "alembic -c alembic.ini upgrade head &&
-      celery -A app.workers.celery_app worker --loglevel=info --concurrency=4"
+      bash -lc "celery -A app.workers.celery_app worker --loglevel=info --concurrency=4 -Q celery,ocr"
 
   web:
     build:
       context: ./web
       dockerfile: Dockerfile.dev
     ports:
-      - "3001:3000"
+      - "3002:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
       NODE_ENV: development

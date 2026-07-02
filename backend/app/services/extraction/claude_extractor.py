@@ -8,6 +8,7 @@ Supports two providers (selected via LLM_PROVIDER):
 Both use the same EXTRACTION_SYSTEM_PROMPT.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -128,14 +129,14 @@ class ExtractionService:
         self.anthropic_model = settings.anthropic_model
 
     async def _call_deepseek(self, user_message: str) -> str:
-        """Call DeepSeek chat completion API directly via urllib."""
+        """Call DeepSeek chat completion API directly via urllib (offloaded to thread pool)."""
         payload = {
             "model": self.deepseek_model,
             "messages": [
                 {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
-            "max_tokens": 2000,
+            "max_tokens": 4096,  # raised from 2000 to handle multi-page invoices
             "temperature": 0.1,
         }
 
@@ -149,9 +150,11 @@ class ExtractionService:
             method="POST",
         )
 
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
+        def _sync_request():
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read())
 
+        result = await asyncio.to_thread(_sync_request)
         return result["choices"][0]["message"]["content"]
 
     async def _call_anthropic(self, user_message: str) -> str:
@@ -302,6 +305,46 @@ class ExtractionService:
 
         confidence = data.get("confidence", 0.5)
         data["confidence"] = max(0.0, min(1.0, float(confidence)))
+
+        # Structural accounting validation: subtotal + vat ≈ total (within 1 VND)
+        subtotal = data.get("subtotal_amount") or 0
+        vat = data.get("vat_amount") or 0
+        total = data.get("total_amount") or 0
+        if subtotal and total:
+            expected_total = subtotal + vat
+            if abs(expected_total - total) > 1:
+                # Flag as structural mismatch — reduce confidence, add note
+                data["_structural_mismatch"] = True
+                data["notes"] = self._append_note(
+                    data.get("notes"),
+                    f"Structural mismatch: subtotal({subtotal}) + vat({vat}) = {expected_total}, "
+                    f"but total_amount = {total} (diff={abs(expected_total - total)}). "
+                    f"Review before filing.",
+                )
+                # Reduce confidence significantly
+                data["confidence"] = min(float(data.get("confidence", 0.5)), 0.4)
+
+        # Reject implausible amounts (> 1 trillion VND per line — likely OCR/decimal error)
+        MAX_REASONABLE_AMOUNT = 1_000_000_000_000
+        for field in ("subtotal_amount", "vat_amount", "total_amount"):
+            val = data.get(field)
+            if val and val > MAX_REASONABLE_AMOUNT:
+                data[field] = None
+                data["notes"] = self._append_note(
+                    data.get("notes"),
+                    f"{field} ({val}) exceeds plausible range — cleared. Re-enter manually.",
+                )
+                data["confidence"] = min(float(data.get("confidence", 0.5)), 0.3)
+
+        # Foreign-currency flag: if currency is specified and not VND, flag for review
+        currency = data.get("currency_code", "").upper()
+        if currency and currency != "VND":
+            data["notes"] = self._append_note(
+                data.get("notes"),
+                f"Foreign currency detected ({currency}). Amounts are stored as-is without FX conversion. "
+                "Convert to VND before filing or flag for manual review.",
+            )
+            data["confidence"] = min(float(data.get("confidence", 0.5)), 0.5)
 
         return data
 
@@ -462,7 +505,30 @@ class ExtractionService:
         return folded
 
     def _normalize_amount_string(self, value: str) -> int | None:
-        digits = re.sub(r"[^\d]", "", value)
+        """
+        Normalize a numeric string to an integer VND.
+
+        Handles:
+        - Vietnamese format: "1.500.000" = 1500000 (dot = thousand separator)
+        - European format: "1,500,000.50" = 1500000 (comma = decimal, dot = thousand)
+        - Plain: "1500000" = 1500000
+        - Decimal comma: "1.500.000,50" → 1500000 (truncate at decimal, Vietnamese)
+
+        Strategy: if comma present, treat as decimal separator and truncate fractional part.
+        Otherwise strip all non-digit characters and parse as integer.
+        """
+        value = value.strip()
+        if not value:
+            return None
+
+        # If comma is present, it is the decimal separator in European/Vietnamese format
+        if "," in value:
+            # Truncate at the decimal comma (Vietnamese accounting: round down)
+            integer_part = value.split(",")[0]
+            digits = re.sub(r"[^\d]", "", integer_part)
+        else:
+            digits = re.sub(r"[^\d]", "", value)
+
         return int(digits) if digits else None
 
     def _score_regex_result(

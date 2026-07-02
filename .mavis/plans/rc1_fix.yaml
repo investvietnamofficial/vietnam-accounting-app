@@ -1,0 +1,298 @@
+version: 1
+plan:
+  name: "GLM RC1 Fix Sprint — VN Accounting"
+  max_concurrency: 4
+  max_consecutive_failures: 2
+  max_cycles: 15
+  auto_reject_retries: 1
+
+tasks:
+  - id: backend-fixes
+    title: "Fix all backend GLM RC1 findings"
+    assigned_to: general
+    verify_skip_reason: Final-test task runs actual test commands and reports results; closure is the test output
+    max_retries: 0
+    prompt: |
+      Fix all backend findings for the VN Accounting app. Work in:
+      /Users/gilbertneo/Desktop/My Apps/Vietnam Accounting App/vn-accounting
+      Repo root: /Users/gilbertneo/Desktop/My Apps/Vietnam Accounting App/vn-accounting
+      IMPORTANT RULES:
+      - NEVER deploy or touch Coolify
+      - NEVER make speculative architecture changes
+      - NEVER add new features
+      - For every fix, add a regression test in the appropriate test file
+      - Commit each fix with a meaningful message after completing it
+      - Run relevant tests after each fix to verify it works
+
+      === C-1: VAT report crashes on exempt/na VAT-rate ===
+      File: backend/app/api/routes/reports.py
+      - Line 235: `float(str(inv.vat_rate.value) or "10") / 100` crashes on exempt/na
+      - Fix: Replace with `_vat_rate_float(inv.vat_rate)` which already handles exempt/na (returns None)
+      - Also check line 686: the VAT aggregation loop. The `_vat_rate_float` helper (lines 179-189) 
+        already returns None for exempt/na, so ensure ALL vat_rate float conversions use it.
+      - Add regression test in backend/tests/test_reports_logic.py:
+        Test that VAT summary/sales/purchase reports do NOT crash when vat_rate is EXEMPT or NOT_APPLICABLE
+        Test: call _vat_rate_float(VATRate.EXEMPT) -> None, _vat_rate_float(VATRate.NOT_APPLICABLE) -> None
+
+      === C-2: Production compose missing Celery worker ===
+      Status: ALREADY FIXED. docker-compose.prod.yml has worker service with USE_CELERY=true.
+      Mark as ALREADY FIXED in your report.
+
+      === C-3: Weak JWT secret defaults ===
+      Status: ALREADY FIXED. config.py rejects "changeme", "dev-jwt-secret" etc.
+      Mark as ALREADY FIXED in your report.
+
+      === C-4: No persistent document storage ===
+      Status: ALREADY FIXED. docker-compose.prod.yml mounts backend_storage:/app/storage volume.
+      Mark as ALREADY FIXED.
+
+      === H-1: Invoice pagination corrupted ===
+      Status: ALREADY FIXED. invoices.py lines 93-94 apply direction_clause before pagination.
+      Mark as ALREADY FIXED.
+
+      === H-2: Refresh token does not revalidate user ===
+      Status: ALREADY FIXED. auth.py refresh_token endpoint loads user and checks is_active.
+      Mark as ALREADY FIXED.
+
+      === H-3: invoice.extraction_confidence never populated ===
+      File: backend/app/workers/tasks.py around line 127-131
+      The Invoice is created with fields but extraction_confidence is not set from the document.
+      Add: invoice.extraction_confidence = doc.extraction_confidence after the doc.extraction_confidence is set.
+      Add regression test in backend/tests/test_document_pipeline.py:
+        Verify invoice.extraction_confidence matches doc.extraction_confidence after processing
+
+      === H-4: No uniqueness constraint on invoices ===
+      Files: backend/alembic/versions/ + backend/app/api/routes/documents.py
+      - Create new alembic migration: 009_add_invoice_unique_constraint.py
+        Uses raw SQL: CREATE UNIQUE INDEX ix_invoices_company_series_number 
+        ON invoices (company_id, invoice_series, invoice_number) 
+        WHERE invoice_series IS NOT NULL AND invoice_number IS NOT NULL
+      - In documents.py upload route: catch IntegrityError on duplicate and return existing document
+      - Add regression test in backend/tests/test_document_pipeline.py
+
+      === H-5: Invoice direction misclassification when seller MST is missing ===
+      File: backend/app/api/routes/reports.py function _invoice_direction (lines 111-127)
+      Current: returns ("purchase", False) when seller_tax_code is missing
+      The second return value (is_certain=False) flags it for review.
+      Add regression test: invoice with no seller_tax_code -> direction returns (purchase, False)
+
+      === H-6: Blocking DeepSeek call ===
+      Status: ALREADY FIXED. _call_deepseek uses asyncio.to_thread wrapping urllib.request.urlopen.
+      Mark as ALREADY FIXED.
+
+      === M-1: Frontend exceptions bypass backend ===
+      Status: DEFERRED TO FRONTEND TRACK.
+
+      === M-2: SMTP sends synchronously ===
+      Files: backend/app/api/routes/auth.py + backend/app/services/email/email_service.py
+      - Create Celery task in backend/app/workers/tasks.py:
+        @celery_app.task(name="app.workers.tasks.send_email", bind=True, max_retries=3, default_retry_delay=30)
+        def send_email_task(self, to_email: str, reset_token: str):
+            from app.services.email.email_service import get_email_service
+            get_email_service().send_password_reset_email(to_email, reset_token)
+      - In auth.py: dispatch to celery background:
+        from app.workers.tasks import send_email_task
+        send_email_task.delay(user.email, reset_token)
+      - Add regression test: email_service is called via celery task dispatch
+
+      === M-3: Login rate limiter per-process ===
+      Files: backend/app/api/routes/auth.py + backend/app/workers/celery_app.py
+      - Replace in-memory _rate_store with Redis-backed rate limiting
+      - Use settings.redis_url with redis-py (sync or async)
+      - Pattern: Redis SETEX with TTL 60, INCR to check count
+      - Fall back to in-memory if Redis unavailable
+      - Add regression test in backend/tests/test_auth_security.py
+
+      === M-4: Documents stranded in processing ===
+      Files: backend/app/api/routes/documents.py
+      - Add constant STALE_PROCESSING_TIMEOUT_MINUTES = 5 at top of documents.py
+      - Modify POST /documents/{id}/retry: also allow retrying documents stuck in PROCESSING > STALE_THRESHOLD
+      - Add regression test: doc in PROCESSING > 5min -> retry succeeds
+
+      === M-5: Concurrent upload duplicate race ===
+      Files: backend/app/api/routes/documents.py (combined with H-4)
+      - After H-4 unique constraint, catch IntegrityError and return existing document
+      - Add concurrency test
+
+      === M-6: Unauthenticated /debug/db ===
+      File: backend/app/main.py
+      - Add Depends(get_current_user) to the /debug/db endpoint
+      - from app.api.routes.auth import get_current_user
+      - Regression test: unauthenticated request -> 401
+
+      === M-7: Google Vision tempfile leak ===
+      Status: ALREADY FIXED. from_service_account_info() primary method exists.
+      Mark as ALREADY FIXED.
+
+      === M-8: Foreign currency silently treated as VND ===
+      Status: ALREADY FIXED. non-VND flagged for review in claude_extractor.py.
+      Mark as ALREADY FIXED.
+
+      === M-9: Amount normalization ===
+      Status: ALREADY FIXED. _normalize_amount_string handles Vietnamese/European formats.
+      Mark as ALREADY FIXED.
+
+      === M-10: max_tokens=2000 truncates ===
+      Status: ALREADY FIXED. max_tokens=4096 in _call_deepseek.
+      Mark as ALREADY FIXED.
+
+      === L-1: Raw filename in storage ===
+      File: backend/app/services/storage/r2_service.py line 54
+      - Current: key = f"{folder}/{uuid.uuid4()}_{filename}"
+      - Fix: strip path traversal and non-alphanumeric chars from filename while keeping extension
+      - Add regression test: filename "..//etc/passwd" -> sanitized without traversal
+
+      === L-2: GDT long outbound HTTP ===
+      Status: DEFERRED. GDT verification already in try/except with graceful degradation.
+
+      === L-3: NEXT_PUBLIC_API_URL defaults to internal URL ===
+      File: web/.env.local.example
+      - Change default from http://localhost:8000
+      - Add comment: "# REQUIRED: Set to your production backend URL"
+
+      === L-4: Redis has no password ===
+      Files: backend/app/core/config.py + docker-compose.prod.yml
+      - In config.py: add redis_password field, update redis_url property to include password
+      - docker-compose.prod.yml: add REDIS_PASSWORD env var (empty default)
+
+      After completing ALL fixes:
+      1. Run tests: cd /Users/gilbertneo/Desktop/My\ Apps/Vietnam\ Accounting\ App/vn-accounting && PYTHONPATH=backend ./.venv311/bin/python -m pytest backend/tests/test_auth_security.py backend/tests/test_document_pipeline.py backend/tests/test_reports_logic.py -q --tb=short
+      2. Run alembic: cd /Users/gilbertneo/Desktop/My\ Apps/Vietnam\ Accounting\ App/vn-accounting && PYTHONPATH=backend ./.venv311/bin/alembic -c backend/alembic.ini upgrade head
+      3. Commit: cd /Users/gilbertneo/Desktop/My\ Apps/Vietnam\ Accounting\ App/vn-accounting && git add -A && git commit -m "fix: GLM RC1 backend findings"
+      4. Push: git push origin HEAD
+      Report back: list of files changed, test results, what was ALREADY FIXED vs actually changed.
+
+  - id: frontend-fixes
+    title: "Fix M-1 frontend exceptions bypass"
+    assigned_to: general
+    verify_skip_reason: Final test agent runs actual E2E and reports results
+    max_retries: 0
+    prompt: |
+      Fix M-1 for VN Accounting app. Work in: /Users/gilbertneo/Desktop/My Apps/Vietnam Accounting App/vn-accounting
+
+      === M-1: Frontend exceptions bypass backend ===
+      File: web/src/hooks/useApi.ts, useExceptionsReport around line 207
+
+      Current: fetches ALL invoices via invoicesApi.list() and computes exceptions CLIENT-SIDE.
+      Backend endpoint GET /api/v1/reports/exceptions exists and does server-side validation.
+
+      Backend endpoint params: year, period (1-12), period_type ("monthly"/"quarterly"), format ("json"/"excel")
+      Backend response: { "issues": [{ "type": "...", "message": "...", "invoices": [...], "count": N }] }
+
+      Fix: Rewrite useExceptionsReport to call /api/v1/reports/exceptions instead of client-side calculation.
+      Keep same return shape so the component (web/src/app/reports/exceptions/page.tsx) needs no changes.
+      Keep: isFetching, refetch, data.issues array.
+
+      After fixing:
+      1. Typecheck: cd /Users/gilbertneo/Desktop/My\ Apps/Vietnam\ Accounting\ App/vn-accounting/web && npx tsc --noEmit -p tsconfig.json 2>&1 | head -20
+      2. Commit: cd /Users/gilbertneo/Desktop/My\ Apps/Vietnam\ Accounting\ App/vn-accounting && git add -A && git commit -m "fix(M-1): use backend /reports/exceptions instead of client-side calculation"
+
+  - id: regression-tests
+    title: "Add regression tests for all GLM RC1 fixes"
+    assigned_to: general
+    verify_skip_reason: Final-test task runs actual pytest commands and reports results
+    max_retries: 0
+    prompt: |
+      Add regression tests for GLM RC1 fixes. Work in:
+      /Users/gilbertneo/Desktop/My Apps/Vietnam Accounting App/vn-accounting
+
+      Append tests to EXISTING test files.
+
+      === backend/tests/test_reports_logic.py — append ===
+      1. test_vat_rate_float_handles_exempt_and_na:
+         from app.api.routes.reports import _vat_rate_float
+         from app.models import VATRate
+         assert _vat_rate_float(VATRate.EXEMPT) is None
+         assert _vat_rate_float(VATRate.NOT_APPLICABLE) is None
+         assert _vat_rate_float(VATRate.TEN) == 0.1
+
+      2. test_invoice_direction_uncertain_when_seller_mst_missing:
+         from app.api.routes.reports import _invoice_direction
+         # Mock invoice with no seller_tax_code
+         # Mock company with tax_code
+         # Assert direction returns ("purchase", False)
+
+      === backend/tests/test_auth_security.py — append ===
+      3. test_jwt_secret_rejects_placeholder_values:
+         Test that config raises ValueError for "dev-jwt-secret", "changeme", "change-me-jwt-secret"
+
+      === backend/tests/test_document_pipeline.py — append ===
+      4. test_upload_integrity_error_returns_existing:
+         Mock DB IntegrityError on flush -> verify upload returns existing doc
+
+      5. test_filename_sanitization_blocks_path_traversal:
+         Test r2_service key generation: "../etc/passwd" -> sanitized (no ..)
+
+      === backend/tests/test_tax_engine.py — append ===
+      6. test_amount_normalization_vietnamese_and_european:
+         Test _normalize_amount_string with "1.500.000", "1.500.000,50", "1500000"
+         Assert integer results
+
+      Run: cd /Users/gilbertneo/Desktop/My\ Apps/Vietnam\ Accounting\ App/vn-accounting && PYTHONPATH=backend ./.venv311/bin/python -m pytest backend/tests/test_auth_security.py backend/tests/test_document_pipeline.py backend/tests/test_reports_logic.py backend/tests/test_tax_engine.py -v --tb=short 2>&1 | tail -30
+      Commit: git add -A && git commit -m "test: regression tests for GLM RC1 fixes"
+
+  - id: final-test
+    title: "Run full test suite and produce final GLM RC1 report"
+    assigned_to: general
+    depends_on: [backend-fixes, frontend-fixes, regression-tests]
+    verify_skip_reason: Plan exits with concrete test evidence and user reviews report before any deploy
+    max_retries: 0
+    prompt: |
+      Final verification phase. Work in: /Users/gilbertneo/Desktop/My Apps/Vietnam Accounting App/vn-accounting
+      Run all commands and produce the final report.
+
+      === PHASE 5A: Migrations ===
+      cd /Users/gilbertneo/Desktop/My\ Apps/Vietnam\ Accounting\ App/vn-accounting
+      PYTHONPATH=backend ./.venv311/bin/alembic -c backend/alembic.ini upgrade head
+      PYTHONPATH=backend ./.venv311/bin/alembic -c backend/alembic.ini current
+
+      === PHASE 5B: Backend Tests ===
+      PYTHONPATH=backend ./.venv311/bin/python -m pytest \
+        backend/tests/test_tax_engine.py \
+        backend/tests/test_reports_logic.py \
+        backend/tests/test_auth_security.py \
+        backend/tests/test_document_pipeline.py \
+        backend/tests/test_einvoice_service.py \
+        backend/tests/test_extraction_accuracy.py \
+        -q --tb=short 2>&1
+
+      === PHASE 5C: Frontend ===
+      cd web && npx tsc --noEmit -p tsconfig.json 2>&1 | head -30
+      npm run build 2>&1 | tail -15
+
+      === PHASE 5D: Docker Build ===
+      cd /Users/gilbertneo/Desktop/My\ Apps/Vietnam\ Accounting\ App/vn-accounting
+      docker compose -p vn-accounting-rc1-test build backend worker web 2>&1 | tail -15
+
+      === PHASE 6: Produce Final Report ===
+      Create /tmp/GLM_RC1_Final_Report.md with:
+
+      # GLM RC1 Fix Sprint — Final Report
+      Date: 2026-07-02
+      Commit: <git rev-parse HEAD output>
+
+      ## Finding Matrix
+      Table with: ID | Finding | Status | Evidence | Files Changed | Tests Added | Result
+
+      ## Test Results
+      Paste actual output from pytest runs
+
+      ## Migration Report
+      List new migrations and results
+
+      ## Security Report
+      JWT, refresh tokens, rate limiting, debug endpoint
+
+      ## Accounting Correctness Report
+      VAT rates, exempt, direction, duplicates, foreign currency
+
+      ## Deployment Readiness Report
+      Docker, compose, Celery, storage
+
+      ## Remaining Risks
+
+      ## Production Readiness Score (X/10)
+
+      Then push: git push origin HEAD
+
+      Output the full report content in your final message.
