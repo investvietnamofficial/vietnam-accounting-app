@@ -197,7 +197,7 @@ def _invoice_dict(inv: Invoice) -> dict:
         "einvoice_verified_at": inv.einvoice_verified_at,
         "notes": inv.notes,
         "gdt_verification": None,
-        "confidence": None,
+        "confidence": inv.extraction_confidence,
         "created_at": inv.created_at,
         "updated_at": inv.updated_at,
     }
